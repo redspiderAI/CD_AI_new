@@ -797,6 +797,103 @@ def reset_user_password(
             cursor.close()
 
 
+class UserInfoRequest(BaseModel):
+    """获取用户完整信息请求"""
+    sub: int = Field(..., gt=0, description="用户ID（自增主键），必须大于0")
+    username: str = Field(..., description="用户名/学号/工号")
+    roles: str | List[str] = Field(..., description="用户角色，如admin/teacher/student")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "sub": 10086,
+                "username": "张老师",
+                "roles": "admin"
+            }
+        }
+    }
+
+@router.post(
+    "/user/full-info",
+    summary="获取用户完整信息",
+    description="输入用户登录信息，返回对应角色表中的全部信息（排除密码）",
+)
+def get_user_full_info(
+    payload: UserInfoRequest = Body(...),
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    cursor = None
+    try:
+        # 解析用户类型
+        user_payload = {
+            "sub": payload.sub,
+            "username": payload.username,
+            "roles": payload.roles
+        }
+        user_type = _resolve_user_type_from_payload(user_payload)
+        info = USER_TABLES[user_type]
+        table = info["table"]
+        id_col = info["id_col"]
+        
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        
+        # 根据用户类型构建查询SQL（排除password字段）
+        if user_type == "student":
+            cursor.execute("""
+                SELECT 
+                    id, student_id, name, phone, email, grade, class_name,
+                    school_id, school_name, department_id, department_name,
+                    DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') as created_at,
+                    DATE_FORMAT(updated_at, '%%Y-%%m-%%d %%H:%%i:%%s') as updated_at
+                FROM students 
+                WHERE id = %s
+            """, (payload.sub,))
+        elif user_type == "teacher":
+            cursor.execute("""
+                SELECT 
+                    id, teacher_id, name, phone, email, department, title,
+                    school_id, school_name, department_id, department_name,
+                    DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') as created_at,
+                    DATE_FORMAT(updated_at, '%%Y-%%m-%%d %%H:%%i:%%s') as updated_at
+                FROM teachers 
+                WHERE id = %s
+            """, (payload.sub,))
+        elif user_type == "admin":
+            cursor.execute("""
+                SELECT 
+                    id, admin_id, name, phone, email, role,
+                    school_id, school_name, department_id, department_name,
+                    DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') as created_at,
+                    DATE_FORMAT(updated_at, '%%Y-%%m-%%d %%H:%%i:%%s') as updated_at
+                FROM admins 
+                WHERE id = %s
+            """, (payload.sub,))
+        else:
+            raise HTTPException(status_code=400, detail="不支持的用户类型")
+        
+        user_info = cursor.fetchone()
+        if not user_info:
+            raise HTTPException(status_code=404, detail=f"{user_type}用户不存在")
+        
+        # 补充用户类型信息
+        user_info["user_type"] = user_type
+        
+        return {
+            "code": 200,
+            "message": "获取用户完整信息成功",
+            "data": user_info
+        }
+    
+    except HTTPException:
+        raise
+    except pymysql.MySQLError as e:
+        logger.error(f"获取用户完整信息数据库错误: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取用户信息失败")
+    finally:
+        if cursor:
+            cursor.close()
+
+
 @router.post(
     "/students",
     response_model=UserOut,
