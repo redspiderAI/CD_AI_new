@@ -102,8 +102,6 @@ CREATE TABLE IF NOT EXISTS `students` (
     KEY `idx_name` (`name`),
     KEY `idx_student_phone` (`phone`),
     KEY `idx_student_email` (`email`),
-    KEY `idx_grade` (`grade`),
-    KEY `idx_class_name` (`class_name`),
     KEY `idx_student_school_id` (`school_id`),
     KEY `idx_student_department_id` (`department_id`),
     KEY `idx_student_group_id` (`group_id`)
@@ -130,7 +128,6 @@ CREATE TABLE IF NOT EXISTS `teachers` (
     KEY `idx_name` (`name`),
     KEY `idx_teacher_phone` (`phone`),
     KEY `idx_teacher_email` (`email`),
-    KEY `idx_department` (`department`),
     KEY `idx_teacher_school_id` (`school_id`),
     KEY `idx_teacher_department_id` (`department_id`),
     KEY `idx_teacher_group_id` (`group_id`)
@@ -461,7 +458,7 @@ def _get_existing_indexes(conn: pymysql.connections.Connection, db_name: str, ta
 
 TABLE_COLUMN_DEFINITIONS = {
     "schools": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
         "school_id": "`school_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '学校唯一标识ID（默认值0，插入时需显式赋值）'",
         "school_name": "`school_name` VARCHAR(128) NOT NULL COMMENT '学校名称'",
         "province": "`province` VARCHAR(64) DEFAULT NULL COMMENT '所属省份'",
@@ -470,7 +467,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "departments": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
         "department_id": "`department_id` BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '院系唯一标识ID'",
         "department_name": "`department_name` VARCHAR(128) NOT NULL COMMENT '院系名称'",
         "school_id": "`school_id` BIGINT UNSIGNED NOT NULL COMMENT '所属学校ID'",
@@ -478,7 +475,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "students": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
         "student_id": "`student_id` VARCHAR(20) NOT NULL COMMENT '学号'",
         "name": "`name` VARCHAR(128) NOT NULL COMMENT '姓名'",
         "phone": "`phone` VARCHAR(32) DEFAULT NULL COMMENT '联系电话'",
@@ -493,7 +490,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "teachers": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
         "teacher_id": "`teacher_id` VARCHAR(64) NOT NULL COMMENT '教师工号'",
         "name": "`name` VARCHAR(128) NOT NULL COMMENT '姓名'",
         "phone": "`phone` VARCHAR(32) DEFAULT NULL COMMENT '联系电话'",
@@ -508,7 +505,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "admins": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
         "admin_id": "`admin_id` VARCHAR(64) NOT NULL COMMENT '管理员账号ID'",
         "name": "`name` VARCHAR(128) NOT NULL COMMENT '姓名'",
         "phone": "`phone` VARCHAR(32) DEFAULT NULL COMMENT '联系电话'",
@@ -523,8 +520,8 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "file_records": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键ID'",
-        "uploader_id": "`uploader_id` VARCHAR(64) DEFAULT NULL COMMENT '上传者ID（字符串类型）'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
+        "uploader_id": "`uploader_id` VARCHAR(64) DEFAULT NULL COMMENT '上传者ID'",
         "name": "`name` VARCHAR(128) NOT NULL COMMENT '上传者姓名'",
         "filename": "`filename` VARCHAR(255) NOT NULL COMMENT '文件名'",
         "upload_time": "`upload_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间'",
@@ -536,7 +533,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "groups": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '自增ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID'",
         "group_id": "`group_id` VARCHAR(64) NOT NULL COMMENT '群组编号'",
         "group_name": "`group_name` VARCHAR(255) NOT NULL COMMENT '群组名称'",
         "teacher_id": "`teacher_id` VARCHAR(64) DEFAULT NULL COMMENT '教师工号（负责人）'",
@@ -558,7 +555,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
     },
     "papers": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '论文ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '论文ID'",
         "owner_id": "`owner_id` INT NOT NULL COMMENT '所有者ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '老师ID'",
         "teacher_name": "`teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名'",
@@ -577,7 +574,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
     },
     "papers_history": {
-        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '历史版本ID'",
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
         "teacher_name": "`teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名'",
         "version": "`version` VARCHAR(20) NOT NULL COMMENT '历史版本号'",
@@ -595,7 +592,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "paper_reviews": {
-        "id": "`id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '审阅记录ID'",
+        "id": "`id` INT AUTO_INCREMENT COMMENT '审阅记录ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '教师ID'",
         "teacher_name": "`teacher_name` VARCHAR(50) NOT NULL COMMENT '教师姓名'",
@@ -606,7 +603,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "annotations": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '批注ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '批注ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '所属论文ID'",
         "author_id": "`author_id` INT NOT NULL COMMENT '批注作者ID'",
         "author_name": "`author_name` VARCHAR(50) NOT NULL COMMENT '批注者姓名'",
@@ -617,15 +614,15 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
     },
     "ddl_management": {
-        "ddlid": "`ddlid` INT PRIMARY KEY AUTO_INCREMENT COMMENT 'DDL唯一ID'",
+        "ddlid": "`ddlid` INT AUTO_INCREMENT COMMENT 'DDL唯一ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '教师ID）'",
         "teacher_name": "`teacher_name` VARCHAR(50) NOT NULL COMMENT '教师姓名'",
         "ddl_time": "`ddl_time` DATETIME NOT NULL COMMENT '截止时间（精确到秒）'",
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'",
-        "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
+        "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "templates": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '模板ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '模板ID'",
         "template_id": "`template_id` VARCHAR(64) NOT NULL COMMENT '模板唯一标识'",
         "oss_key": "`oss_key` VARCHAR(255) NOT NULL COMMENT 'OSS存储键'",
         "filename": "`filename` VARCHAR(255) NOT NULL COMMENT '原始文件名'",
@@ -636,7 +633,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "user_messages": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '消息ID'",
         "user_id": "`user_id` VARCHAR(64) NOT NULL COMMENT '接收用户ID'",
         "username": "`username` VARCHAR(64) DEFAULT NULL COMMENT '接收用户名'",
         "title": "`title` VARCHAR(255) NOT NULL COMMENT '消息标题'",
@@ -649,7 +646,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "operation_logs": {
-        "id": "`id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID'",
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '日志ID'",
         "user_id": "`user_id` VARCHAR(64) NOT NULL COMMENT '操作用户ID'",
         "username": "`username` VARCHAR(64) NOT NULL COMMENT '操作用户名'",
         "operation_type": "`operation_type` VARCHAR(32) NOT NULL COMMENT '操作类型（如create, update, delete）'",
@@ -679,8 +676,6 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_name ON `students` (name)",
         "CREATE INDEX idx_student_phone ON `students` (phone)",
         "CREATE INDEX idx_student_email ON `students` (email)",
-        "CREATE INDEX idx_grade ON `students` (grade)",
-        "CREATE INDEX idx_class_name ON `students` (class_name)",
         "CREATE INDEX idx_student_school_id ON `students` (school_id)",
         "CREATE INDEX idx_student_department_id ON `students` (department_id)",
         "CREATE INDEX idx_student_group_id ON `students` (group_id)"
@@ -690,7 +685,6 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_name ON `teachers` (name)",
         "CREATE INDEX idx_teacher_phone ON `teachers` (phone)",
         "CREATE INDEX idx_teacher_email ON `teachers` (email)",
-        "CREATE INDEX idx_department ON `teachers` (department)",
         "CREATE INDEX idx_teacher_school_id ON `teachers` (school_id)",
         "CREATE INDEX idx_teacher_department_id ON `teachers` (department_id)",
         "CREATE INDEX idx_teacher_group_id ON `teachers` (group_id)"
@@ -752,6 +746,7 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_teacher_name ON `ddl_management` (teacher_name)"
     ],
     "templates": [
+        "CREATE UNIQUE INDEX uniq_template_id ON `templates` (template_id)",
         "CREATE INDEX idx_template_id ON `templates` (template_id)"
     ],
     "user_messages": [
