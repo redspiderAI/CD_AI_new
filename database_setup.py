@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS `admins` (
 FILE_RECORDS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `file_records` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+    `uploader_id` VARCHAR(64) DEFAULT NULL COMMENT '上传者ID',
     `name` VARCHAR(128) NOT NULL COMMENT '上传者姓名',
     `filename` VARCHAR(255) NOT NULL COMMENT '文件名',
     `upload_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
@@ -175,6 +176,7 @@ CREATE TABLE IF NOT EXISTS `file_records` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_name` (`name`),
+    KEY `idx_uploader_id` (`uploader_id`),
     KEY `idx_filename` (`filename`),
     KEY `idx_upload_time` (`upload_time`),
     KEY `idx_file_type` (`file_type`)
@@ -187,14 +189,16 @@ CREATE TABLE IF NOT EXISTS `groups` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID',
     `group_id` VARCHAR(64) NOT NULL COMMENT '群组编号',
     `group_name` VARCHAR(255) NOT NULL COMMENT '群组名称',
-    `teacher_id` VARCHAR(64) DEFAULT NULL COMMENT '教师工号',
+    `teacher_id` VARCHAR(64) DEFAULT NULL COMMENT '教师工号（负责人）',
+    `teacher_name` VARCHAR(128) DEFAULT NULL COMMENT '教师姓名（负责人）',
     `description` TEXT COMMENT '群组描述',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uniq_group_id` (`group_id`),
     KEY `idx_group_name` (`group_name`),
-    KEY `idx_teacher_id` (`teacher_id`)
+    KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_teacher_name` (`teacher_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='群组表';
 """
 
@@ -224,6 +228,7 @@ CREATE TABLE IF NOT EXISTS `papers` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '论文ID',
     `owner_id` INT NOT NULL COMMENT '所有者ID',
     `teacher_id` INT NOT NULL COMMENT '老师ID',
+    `teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名', 
     `version` VARCHAR(20) NOT NULL COMMENT '当前版本号',
     `size` INT NOT NULL COMMENT '文件大小（字节）',
     `status` VARCHAR(32) NOT NULL COMMENT '状态（uploaded:已上传, processing:处理中, completed:完成, rejected:驳回）',
@@ -240,6 +245,7 @@ CREATE TABLE IF NOT EXISTS `papers` (
     PRIMARY KEY (`id`),
     KEY `idx_owner_id` (`owner_id`),
     KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_teacher_name` (`teacher_name`),
     KEY `idx_version` (`version`),
     KEY `idx_status` (`status`),
     KEY `idx_operated_time` (`operated_time`)
@@ -251,6 +257,7 @@ PAPERS_HISTORY_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `papers_history` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID',
     `paper_id` INT NOT NULL COMMENT '论文ID',
+    `teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名',
     `version` VARCHAR(20) NOT NULL COMMENT '历史版本号',
     `size` INT NOT NULL COMMENT '文件大小（字节）',
     `status` VARCHAR(32) NOT NULL COMMENT '状态（如uploaded, processing, completed等）',
@@ -266,6 +273,7 @@ CREATE TABLE IF NOT EXISTS `papers_history` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_papers_history_paper_id` (`paper_id`),
+    KEY `idx_papers_history_teacher_name` (`teacher_name`),
     KEY `idx_papers_history_version` (`version`),
     KEY `idx_papers_history_status` (`status`),
     KEY `idx_papers_history_created_at` (`created_at`),
@@ -279,6 +287,7 @@ CREATE TABLE IF NOT EXISTS `paper_reviews` (
     id INT AUTO_INCREMENT PRIMARY KEY COMMENT '审阅记录ID',
     paper_id INT NOT NULL COMMENT '论文ID',
     teacher_id INT NOT NULL COMMENT '教师ID',
+    teacher_name VARCHAR(50) NOT NULL COMMENT '教师姓名',
     review_content TEXT NOT NULL COMMENT '审阅内容',
     review_time DATETIME NOT NULL COMMENT '审阅时间',
     updated_time DATETIME DEFAULT NULL COMMENT '更新时间',
@@ -296,6 +305,7 @@ CREATE TABLE IF NOT EXISTS `annotations` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '批注ID',
     `paper_id` INT NOT NULL COMMENT '所属论文ID',
     `author_id` INT NOT NULL COMMENT '批注作者ID',
+    `author_name` VARCHAR(50) NOT NULL COMMENT '批注者姓名',
     `paragraph_id` VARCHAR(50) DEFAULT NULL COMMENT '段落ID（可选）',
     `coordinates` JSON DEFAULT NULL COMMENT '坐标信息（JSON格式）',
     `content` TEXT NOT NULL COMMENT '批注内容',
@@ -319,6 +329,7 @@ CREATE TABLE IF NOT EXISTS `ddl_management` (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     INDEX idx_teacher_id (teacher_id),
     INDEX idx_ddl_time (ddl_time),
+    INDEX idx_teacher_name (teacher_name) 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='论文DDL截止时间管理表';
 """
 
@@ -510,6 +521,7 @@ TABLE_COLUMN_DEFINITIONS = {
     },
     "file_records": {
         "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键ID'",
+        "uploader_id": "`uploader_id` VARCHAR(64) DEFAULT NULL COMMENT '上传者ID'",
         "name": "`name` VARCHAR(128) NOT NULL COMMENT '上传者姓名'",
         "filename": "`filename` VARCHAR(255) NOT NULL COMMENT '文件名'",
         "upload_time": "`upload_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间'",
@@ -524,7 +536,8 @@ TABLE_COLUMN_DEFINITIONS = {
         "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID'",
         "group_id": "`group_id` VARCHAR(64) NOT NULL COMMENT '群组编号'",
         "group_name": "`group_name` VARCHAR(255) NOT NULL COMMENT '群组名称'",
-        "teacher_id": "`teacher_id` VARCHAR(64) DEFAULT NULL COMMENT '教师工号'",
+        "teacher_id": "`teacher_id` VARCHAR(64) DEFAULT NULL COMMENT '教师工号（负责人）'",
+        "teacher_name": "`teacher_name` VARCHAR(128) DEFAULT NULL COMMENT '教师姓名（负责人）'",
         "description": "`description` TEXT COMMENT '群组描述'",
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'",
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
@@ -545,6 +558,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '论文ID'",
         "owner_id": "`owner_id` INT NOT NULL COMMENT '所有者ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '老师ID'",
+        "teacher_name": "`teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名'",
         "version": "`version` VARCHAR(20) NOT NULL COMMENT '当前版本号'",
         "size": "`size` INT NOT NULL COMMENT '文件大小（字节）'",
         "status": "`status` VARCHAR(32) NOT NULL COMMENT '状态（uploaded:已上传, processing:处理中, completed:完成, rejected:驳回）'",
@@ -562,6 +576,7 @@ TABLE_COLUMN_DEFINITIONS = {
     "papers_history": {
         "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
+        "teacher_name": "`teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名'",
         "version": "`version` VARCHAR(20) NOT NULL COMMENT '历史版本号'",
         "size": "`size` INT NOT NULL COMMENT '文件大小（字节）'",
         "status": "`status` VARCHAR(32) NOT NULL COMMENT '状态（如uploaded, processing, completed等）'",
@@ -577,9 +592,10 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "paper_reviews": {
-        "id": "`id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '审阅记录ID'",
+        "id": "`id` INT AUTO_INCREMENT COMMENT '审阅记录ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '教师ID'",
+        "teacher_name": "`teacher_name` VARCHAR(50) NOT NULL COMMENT '教师姓名'",
         "review_content": "`review_content` TEXT NOT NULL COMMENT '审阅内容'",
         "review_time": "`review_time` DATETIME NOT NULL COMMENT '审阅时间'",
         "updated_time": "`updated_time` DATETIME DEFAULT NULL COMMENT '更新时间'",
@@ -590,6 +606,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '批注ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '所属论文ID'",
         "author_id": "`author_id` INT NOT NULL COMMENT '批注作者ID'",
+        "author_name": "`author_name` VARCHAR(50) NOT NULL COMMENT '批注者姓名'",
         "paragraph_id": "`paragraph_id` VARCHAR(50) DEFAULT NULL COMMENT '段落ID（可选）'",
         "coordinates": "`coordinates` JSON DEFAULT NULL COMMENT '坐标信息（JSON格式）'",
         "content": "`content` TEXT NOT NULL COMMENT '批注内容'",
@@ -597,7 +614,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
     },
     "ddl_management": {
-        "ddlid": "`ddlid` INT PRIMARY KEY AUTO_INCREMENT COMMENT 'DDL唯一ID'",
+        "ddlid": "`ddlid` INT AUTO_INCREMENT COMMENT 'DDL唯一ID'",
         "teacher_id": "`teacher_id` INT NOT NULL COMMENT '教师ID）'",
         "teacher_name": "`teacher_name` VARCHAR(50) NOT NULL COMMENT '教师姓名'",
         "ddl_time": "`ddl_time` DATETIME NOT NULL COMMENT '截止时间（精确到秒）'",
@@ -612,6 +629,19 @@ TABLE_COLUMN_DEFINITIONS = {
         "content_type": "`content_type` VARCHAR(128) DEFAULT NULL COMMENT 'MIME类型'",
         "uploader_id": "`uploader_id` VARCHAR(64) NOT NULL COMMENT '上传者ID'",
         "upload_time": "`upload_time` DATETIME NOT NULL COMMENT '上传时间'",
+        "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
+        "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
+    },
+    "user_messages": {
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '消息ID'",
+        "user_id": "`user_id` VARCHAR(64) NOT NULL COMMENT '接收用户ID'",
+        "username": "`username` VARCHAR(64) DEFAULT NULL COMMENT '接收用户名'",
+        "title": "`title` VARCHAR(255) NOT NULL COMMENT '消息标题'",
+        "content": "`content` TEXT NOT NULL COMMENT '消息内容'",
+        "source": "`source` VARCHAR(64) DEFAULT NULL COMMENT '来源（系统/业务模块）'",
+        "status": "`status` VARCHAR(16) NOT NULL DEFAULT 'unread' COMMENT '状态（unread/read）'",
+        "received_time": "`received_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '接收时间'",
+        "metadata": "`metadata` JSON DEFAULT NULL COMMENT '扩展元数据'",
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
@@ -682,6 +712,7 @@ TABLE_INDEX_DEFINITIONS = {
     ],
     "file_records": [
         "CREATE INDEX idx_name ON `file_records` (name)",
+        "CREATE INDEX idx_uploader_id ON `file_records` (uploader_id)",
         "CREATE INDEX idx_filename ON `file_records` (filename)",
         "CREATE INDEX idx_upload_time ON `file_records` (upload_time)",
         "CREATE INDEX idx_file_type ON `file_records` (file_type)"
@@ -689,7 +720,8 @@ TABLE_INDEX_DEFINITIONS = {
     "groups": [
         "CREATE UNIQUE INDEX uniq_group_id ON `groups` (group_id)",
         "CREATE INDEX idx_group_name ON `groups` (group_name)",
-        "CREATE INDEX idx_teacher_id ON `groups` (teacher_id)"
+        "CREATE INDEX idx_teacher_id ON `groups` (teacher_id)",
+        "CREATE INDEX idx_teacher_name ON `groups` (teacher_name)"
     ],
     "group_members": [
         "CREATE INDEX idx_member_id ON `group_members` (member_id)",
@@ -699,11 +731,14 @@ TABLE_INDEX_DEFINITIONS = {
     "papers": [
         "CREATE INDEX idx_owner_id ON `papers` (owner_id)",
         "CREATE INDEX idx_teacher_id ON `papers` (teacher_id)",
+        "CREATE INDEX idx_teacher_name ON `papers` (teacher_name)",
         "CREATE INDEX idx_version ON `papers` (version)",
-        "CREATE INDEX idx_status ON `papers` (status)"
+        "CREATE INDEX idx_status ON `papers` (status)",
+        "CREATE INDEX idx_operated_time ON `papers` (operated_time)"
     ],
     "papers_history": [
         "CREATE INDEX idx_papers_history_paper_id ON `papers_history` (paper_id)",
+        "CREATE INDEX idx_papers_history_teacher_name ON `papers_history` (teacher_name)",
         "CREATE INDEX idx_papers_history_version ON `papers_history` (version)",
         "CREATE INDEX idx_papers_history_status ON `papers_history` (status)",
         "CREATE INDEX idx_papers_history_created_at ON `papers_history` (created_at)"
@@ -723,6 +758,7 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_teacher_name ON `ddl_management` (teacher_name)"
     ],
     "templates": [
+        "CREATE UNIQUE INDEX uniq_template_id ON `templates` (template_id)",
         "CREATE INDEX idx_template_id ON `templates` (template_id)"
     ],
     "user_messages": [
