@@ -243,7 +243,6 @@ CREATE TABLE IF NOT EXISTS `papers` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '论文ID',
     `owner_id` INT NOT NULL COMMENT '所有者ID',
     `teacher_id` INT NOT NULL COMMENT '老师ID',
-    `teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名', 
     `version` VARCHAR(20) NOT NULL COMMENT '当前版本号',
     `size` INT NOT NULL COMMENT '文件大小（字节）',
     `status` VARCHAR(32) NOT NULL COMMENT '状态（uploaded:已上传, processing:处理中, completed:完成, rejected:驳回）',
@@ -260,7 +259,6 @@ CREATE TABLE IF NOT EXISTS `papers` (
     PRIMARY KEY (`id`),
     KEY `idx_owner_id` (`owner_id`),
     KEY `idx_teacher_id` (`teacher_id`),
-    KEY `idx_teacher_name` (`teacher_name`),
     KEY `idx_version` (`version`),
     KEY `idx_status` (`status`),
     KEY `idx_operated_time` (`operated_time`)
@@ -272,7 +270,6 @@ PAPERS_HISTORY_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `papers_history` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID',
     `paper_id` INT NOT NULL COMMENT '论文ID',
-    `teacher_name` VARCHAR(128) NOT NULL COMMENT '老师姓名',
     `version` VARCHAR(20) NOT NULL COMMENT '历史版本号',
     `size` INT NOT NULL COMMENT '文件大小（字节）',
     `status` VARCHAR(32) NOT NULL COMMENT '状态（如uploaded, processing, completed等）',
@@ -288,7 +285,6 @@ CREATE TABLE IF NOT EXISTS `papers_history` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_papers_history_paper_id` (`paper_id`),
-    KEY `idx_papers_history_teacher_name` (`teacher_name`),
     KEY `idx_papers_history_version` (`version`),
     KEY `idx_papers_history_status` (`status`),
     KEY `idx_papers_history_created_at` (`created_at`),

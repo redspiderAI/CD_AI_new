@@ -100,6 +100,7 @@ async def upload_material(
                 storage_path,
                 file_type,
                 version,          
+                remark,          
             )
         )
         # 获取新增记录ID
