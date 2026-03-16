@@ -19,21 +19,20 @@ class NotificationContent(BaseModel):
 @router.post(
     "/push",
     summary="信息推送",
-    description="推送通知信息，支持单个用户或多个用户批量推送，记录到 user_messages 表"
+    description="推送通知信息，支持批量推送，记录到 user_messages 表"
 )
 def push_notification(
     payload: NotificationContent,
-    target_user_id: str | None = Query(None, description="单个目标用户ID"),
-    target_user_ids: str | None = Query(None, description="批量目标用户ID列表，逗号分隔，例如: 1,2,3"),
-    teacher_id: str | None = Query(None, description="教师ID，管理员可通过教师ID给教师推送信息"),
+    student_ids: str | None = Query(None, description="学生ID列表（学生学号），逗号分隔，例如: 1,2,3，管理员和教师都可以使用"),
+    teacher_ids: str | None = Query(None, description="教师ID列表（教师工号），逗号分隔，例如: 1001,1002，仅管理员可用"),
     current_user: str = Query(..., description="当前用户信息(JSON字符串)，示例: {\"sub\":1,\"roles\":[\"admin\"],\"username\":\"admin1\"}"),
     db: pymysql.connections.Connection = Depends(get_db),
 ):
     cursor = None
     try:
         # 1. 核心参数校验
-        if not (target_user_id or target_user_ids or teacher_id):
-            raise HTTPException(status_code=400, detail="必须提供目标用户ID（target_user_id）、目标用户ID列表（target_user_ids）或教师ID（teacher_id）")
+        if not (student_ids or teacher_ids):
+            raise HTTPException(status_code=400, detail="必须提供学生ID列表（student_ids）或教师ID列表（teacher_ids）")
         if not payload.title:
             raise HTTPException(status_code=400, detail="消息标题（title）不能为空")
         if not payload.content:
@@ -46,30 +45,55 @@ def push_notification(
             current_user_data = json.loads(current_user)
             sender_id = str(current_user_data.get("sub"))
             sender_roles = current_user_data.get("roles", [])
+            if not sender_roles:
+                raise HTTPException(status_code=403, detail="无效的用户角色")
             sender_role = sender_roles[0] if sender_roles else "user"
         except Exception:
-            sender_id = "unknown"
-            sender_role = "user"
+            raise HTTPException(status_code=403, detail="无效的用户信息格式")
         
-        # 3. 权限验证：如果提供了 teacher_id，只有管理员可以使用
-        if teacher_id and "admin" not in sender_roles:
-            raise HTTPException(status_code=403, detail="只有管理员可以通过教师ID给教师推送信息")
-        
+        # 3. 验证发送者身份是否存在
         cursor = db.cursor()
+        if "admin" in sender_roles:
+            # 验证管理员是否存在
+            cursor.execute("SELECT id FROM admins WHERE id = %s", (sender_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=403, detail="管理员身份不存在")
+        elif "teacher" in sender_roles:
+            # 验证教师是否存在
+            cursor.execute("SELECT id FROM teachers WHERE id = %s", (sender_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=403, detail="教师身份不存在")
+        else:
+            raise HTTPException(status_code=403, detail="无权执行此操作")
+        
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
         
         # 4. 准备目标用户列表
         target_users = []
-        if target_user_id:
-            target_users.append({"user_id": target_user_id, "username": ""})
-        if target_user_ids:
-            user_id_list = [uid.strip() for uid in target_user_ids.split(",") if uid.strip()]
-            for user_id in user_id_list:
-                target_users.append({"user_id": user_id, "username": ""})
-        if teacher_id:
-            # 管理员通过教师ID给教师推送信息
-            target_users.append({"user_id": teacher_id, "username": ""})
+        
+        # 处理学生ID列表
+        if student_ids:
+            student_id_list = [sid.strip() for sid in student_ids.split(",") if sid.strip()]
+            for student_id in student_id_list:
+                # 验证学生是否存在
+                cursor.execute("SELECT student_id FROM students WHERE student_id = %s", (student_id,))
+                if not cursor.fetchone():
+                    raise HTTPException(status_code=404, detail=f"学生ID {student_id} 不存在")
+                target_users.append({"user_id": student_id, "username": ""})
+        
+        # 处理教师ID列表
+        if teacher_ids:
+            # 权限验证：只有管理员可以给教师发送消息
+            if "admin" not in sender_roles:
+                raise HTTPException(status_code=403, detail="只有管理员可以给教师发送消息")
+            teacher_id_list = [tid.strip() for tid in teacher_ids.split(",") if tid.strip()]
+            for teacher_id in teacher_id_list:
+                # 验证教师是否存在
+                cursor.execute("SELECT teacher_id FROM teachers WHERE teacher_id = %s", (teacher_id,))
+                if not cursor.fetchone():
+                    raise HTTPException(status_code=404, detail=f"教师ID {teacher_id} 不存在")
+                target_users.append({"user_id": teacher_id, "username": ""})
         
         # 5. 处理消息内容
         content_value = payload.content or ""
@@ -82,6 +106,8 @@ def push_notification(
         # 6. 保存 sender 信息到 metadata
         metadata["sender_id"] = sender_id
         metadata["sender_role"] = sender_role
+        # 添加唯一标识符，确保每条消息都能唯一标识，避免相同消息被覆盖
+        metadata["message_id"] = f"{sender_id}_{int(datetime.now().timestamp() * 1000)}"
 
         metadata_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
         source_value = "system"  # 固定来源
@@ -117,11 +143,18 @@ def push_notification(
         db.commit()
         
         # 9. 返回推送结果
+        # 构建返回的消息列表
+        messages = []
+        for i, user in enumerate(target_users):
+            messages.append({
+                "target_id": user["user_id"],
+                "title": payload.title,
+                "message_id": inserted_ids[i] if i < len(inserted_ids) else None
+            })
+        
         return {
             "message": f"消息推送成功，共推送 {len(target_users)} 条消息",
-            "message_ids": inserted_ids,
-            "target_user_count": len(target_users),
-            "title": payload.title
+            "messages": messages
         }
         
     except HTTPException:
@@ -144,12 +177,12 @@ def push_notification(
     "/query",
     response_model=NotificationQueryResponse,
     summary="查看已推送消息",
-    description="管理员和教师查看已推送的消息，支持按发送者、目标用户和状态筛选与分页"
+    description="查看自己发送的消息，支持三种查询方式：1.按目标id查找 2.管理员查找 3.教师查找（三选一）"
 )
 def query_notifications(
-    user_type: str = Query(..., description="用户类型：admin(管理员) 或 teacher(教师)"),
-    target_user_id: Optional[str] = Query(None, description="按目标用户ID筛选"),
-    sender_id: Optional[str] = Query(None, description="按发送者ID筛选（仅管理员可用）"),
+    target_id: Optional[str] = Query(None, description="目标对象的ID（学生学号或教师工号）"),
+    admin_id: Optional[str] = Query(None, description="管理员ID（自增id，仅管理员可用）"),
+    teacher_id: Optional[str] = Query(None, description="教师工号（仅教师可用）"),
     status: Optional[str] = Query(None, description="按状态筛选：unread, read, retracted"),
     page: int = 1,
     page_size: int = 20,
@@ -162,16 +195,12 @@ def query_notifications(
         current_user = urllib.parse.unquote(current_user)
         current_user_data = json.loads(current_user)
         user_roles = current_user_data.get("roles", [])
+        user_sub = str(current_user_data.get("sub"))
         
-        # 验证用户类型选择是否与实际身份一致
-        if user_type == "admin":
-            if "admin" not in user_roles:
-                raise HTTPException(status_code=403, detail="当前用户不是管理员，无法以管理员身份查看")
-        elif user_type == "teacher":
-            if "teacher" not in user_roles and "admin" not in user_roles:
-                raise HTTPException(status_code=403, detail="当前用户不是教师，无法以教师身份查看")
-        else:
-            raise HTTPException(status_code=400, detail="用户类型必须是 admin 或 teacher")
+        # 检查是否提供了有效的查询参数（三选一）
+        query_params = [target_id, admin_id, teacher_id]
+        if sum(1 for p in query_params if p) != 1:
+            raise HTTPException(status_code=400, detail="必须提供且仅提供一个查询参数：target_id、admin_id或teacher_id")
             
     except json.JSONDecodeError:
         raise HTTPException(status_code=403, detail="无效的用户信息格式")
@@ -191,38 +220,48 @@ def query_notifications(
         base_where = "1=1" 
         params = []
         
-        # 权限限制：根据选择的用户类型
-        user_sub = str(current_user_data.get("sub"))
+        # 基础条件：只能查看自己发送的消息
+        # 使用更宽松的匹配方式，确保能找到消息
+        base_where += " AND (metadata LIKE %s OR metadata IS NULL OR metadata = '{}')"
+        params.append(f'%sender_id%{user_sub}%')
         
-        if user_type == "teacher":
-            # 老师只能查看自己发送的消息
-            # 但如果消息没有 sender_id，也允许查看
-            base_where += " AND (metadata LIKE %s OR metadata IS NULL OR metadata = '{}')"
-            params.append(f'%\"sender_id\":\"{user_sub}\"%')
-        
-        # 按目标用户ID筛选
-        if target_user_id:
-            # 教师只能查看自己学生的消息
-            if user_type == "teacher":
-                # 检查学生是否是该教师的学生（通过群组关系）
-                check_sql = """
-                SELECT 1 FROM group_members gm1
-                JOIN group_members gm2 ON gm1.group_id = gm2.group_id
-                WHERE gm1.member_id = %s AND gm1.member_type = 'student' AND gm1.is_active = 1
-                AND gm2.member_id = %s AND gm2.member_type = 'teacher' AND gm2.is_active = 1
-                LIMIT 1
-                """
-                cursor.execute(check_sql, (target_user_id, user_sub))
-                if not cursor.fetchone():
-                    raise HTTPException(status_code=403, detail="无权查看该学生的消息，该学生不是您的学生")
-            
+        # 处理查询参数
+        if target_id:
+            # 按目标id查找
+            # 直接使用target_id作为user_id进行查询，不进行额外验证
+            # 这样可以确保能找到推送时存储的消息
             base_where += " AND user_id = %s"
-            params.append(target_user_id)
+            params.append(target_id)
         
-        # 按发送者ID筛选（仅管理员可用）
-        if sender_id and user_type == "admin":
-            base_where += " AND metadata LIKE %s"
-            params.append(f'%\"sender_id\":\"{sender_id}\"%')
+        elif admin_id:
+            # 管理员查找
+            if "admin" not in user_roles:
+                raise HTTPException(status_code=403, detail="只有管理员可以使用admin_id参数")
+            
+            # 检查输入的admin_id是否与自身currentuser中的admins.id相符
+            cursor.execute("SELECT id FROM admins WHERE id = %s", (admin_id,))
+            admin_row = cursor.fetchone()
+            if not admin_row:
+                raise HTTPException(status_code=404, detail="管理员ID不存在")
+            
+            if str(admin_row[0]) != user_sub:
+                raise HTTPException(status_code=403, detail="输入的管理员ID与当前用户不符")
+        
+        elif teacher_id:
+            # 教师查找
+            if "teacher" not in user_roles:
+                raise HTTPException(status_code=403, detail="只有教师可以使用teacher_id参数")
+            
+            # 检查输入的teacher_id是否与自身currentuser中的teacher_id相符
+            cursor.execute("SELECT id, teacher_id FROM teachers WHERE teacher_id = %s", (teacher_id,))
+            teacher_row = cursor.fetchone()
+            if not teacher_row:
+                raise HTTPException(status_code=404, detail="教师工号不存在")
+            
+            # 获取教师的自增ID
+            teacher_internal_id = str(teacher_row[0])
+            if teacher_internal_id != user_sub:
+                raise HTTPException(status_code=403, detail="输入的教师工号与当前用户不符")
         
         # 按状态筛选
         if status:
@@ -262,8 +301,6 @@ def query_notifications(
                     username=row[2] or "",
                     title=row[3],
                     content=row[4],
-                    target_user_id=row[1],  # user_messages表中的user_id就是目标用户ID
-                    target_username=row[2], # username就是目标用户名
                     operation_time=row[7].strftime("%Y-%m-%d %H:%M:%S") if row[7] else None,
                     status=row[6],  # unread/read/retracted
                     sender_id=sender_id
@@ -425,6 +462,158 @@ def retract_notification(
         raise HTTPException(status_code=500, detail=f"通知撤回失败：{str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"撤回处理失败：{str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
+@router.get(
+    "/received",
+    summary="查看收到的消息",
+    description="学生和教师查看发给自己的消息，返回消息的标题、内容、操作时间和发送者姓名"
+)
+def get_received_notifications(
+    student_id: Optional[str] = Query(None, description="学生学号（仅学生可用）"),
+    teacher_id: Optional[str] = Query(None, description="教师工号（仅教师可用）"),
+    status: Optional[str] = Query(None, description="按状态筛选：unread, read, retracted"),
+    page: int = 1,
+    page_size: int = 20,
+    current_user: str = Query(..., description="当前用户信息(JSON字符串)，示例: {\"sub\":1,\"roles\":[\"student\"],\"username\":\"student1\"}"),
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    # 1. 权限校验
+    try:
+        import urllib.parse
+        current_user = urllib.parse.unquote(current_user)
+        current_user_data = json.loads(current_user)
+        user_roles = current_user_data.get("roles", [])
+        user_sub = str(current_user_data.get("sub"))
+        
+        # 检查是否提供了有效的查询参数（二选一）
+        query_params = [student_id, teacher_id]
+        if sum(1 for p in query_params if p) != 1:
+            raise HTTPException(status_code=400, detail="必须提供且仅提供一个查询参数：student_id或teacher_id")
+        
+        # 验证权限
+        if student_id:
+            if "student" not in user_roles:
+                raise HTTPException(status_code=403, detail="只有学生可以使用student_id参数")
+            # 验证学生ID与当前用户是否匹配
+            cursor = db.cursor()
+            cursor.execute("SELECT id FROM students WHERE student_id = %s", (student_id,))
+            student_row = cursor.fetchone()
+            if not student_row:
+                raise HTTPException(status_code=404, detail="学生学号不存在")
+            if str(student_row[0]) != user_sub:
+                raise HTTPException(status_code=403, detail="输入的学生学号与当前用户不符")
+        
+        if teacher_id:
+            if "teacher" not in user_roles:
+                raise HTTPException(status_code=403, detail="只有教师可以使用teacher_id参数")
+            # 验证教师ID与当前用户是否匹配
+            cursor = db.cursor()
+            cursor.execute("SELECT id FROM teachers WHERE teacher_id = %s", (teacher_id,))
+            teacher_row = cursor.fetchone()
+            if not teacher_row:
+                raise HTTPException(status_code=404, detail="教师工号不存在")
+            if str(teacher_row[0]) != user_sub:
+                raise HTTPException(status_code=403, detail="输入的教师工号与当前用户不符")
+            
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=403, detail="无效的用户信息格式")
+    except HTTPException:
+        raise
+    
+    # 2. 分页参数校验
+    if page < 1:
+        page = 1
+    if page_size < 1 or page_size > 100:
+        page_size = 20
+    
+    cursor = None
+    try:
+        cursor = db.cursor()
+        # 3. 构建查询条件
+        base_where = "1=1" 
+        params = []
+        
+        # 基础条件：只能查看发给自己的消息
+        if student_id:
+            base_where += " AND user_id = %s"
+            params.append(student_id)
+        elif teacher_id:
+            base_where += " AND user_id = %s"
+            params.append(teacher_id)
+        
+        # 按状态筛选
+        if status:
+            base_where += " AND status = %s"
+            params.append(status)
+        
+        # 4. 查询总记录数
+        count_sql = f"SELECT COUNT(*) FROM user_messages WHERE {base_where}"
+        cursor.execute(count_sql, params)
+        total = cursor.fetchone()[0]
+        
+        # 5. 分页查询数据
+        offset = (page - 1) * page_size
+        select_sql = f"""
+        SELECT id, user_id, username, title, content, source, status, received_time, metadata 
+        FROM user_messages 
+        WHERE {base_where} 
+        ORDER BY received_time DESC 
+        LIMIT %s OFFSET %s
+        """
+        cursor.execute(select_sql, params + [page_size, offset])
+        rows = cursor.fetchall()
+        
+        # 6. 组装返回数据
+        items = []
+        for row in rows:
+            # row结构：(id, user_id, username, title, content, source, status, received_time, metadata)
+            try:
+                metadata = json.loads(row[8]) if row[8] else {}
+            except Exception:
+                metadata = {}
+            sender_id = metadata.get("sender_id")
+            sender_role = metadata.get("sender_role")
+            
+            # 获取发送者姓名
+            sender_name = ""
+            if sender_id and sender_role:
+                if sender_role == "admin":
+                    # 查询管理员姓名
+                    cursor.execute("SELECT name FROM admins WHERE id = %s", (sender_id,))
+                    admin_row = cursor.fetchone()
+                    if admin_row:
+                        sender_name = admin_row[0]
+                elif sender_role == "teacher":
+                    # 查询教师姓名
+                    cursor.execute("SELECT name FROM teachers WHERE id = %s", (sender_id,))
+                    teacher_row = cursor.fetchone()
+                    if teacher_row:
+                        sender_name = teacher_row[0]
+            
+            items.append({
+                "title": row[3],
+                "content": row[4],
+                "operation_time": row[7].strftime("%Y-%m-%d %H:%M:%S") if row[7] else None,
+                "sender_name": sender_name
+            })
+        
+        # 7. 计算总页数
+        total_pages = (total + page_size - 1) // page_size
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages
+        }
+    except HTTPException:
+        raise
+    except pymysql.MySQLError as e:
+        raise HTTPException(status_code=500, detail=f"查询失败：{str(e)}")
     finally:
         if cursor:
             cursor.close()
