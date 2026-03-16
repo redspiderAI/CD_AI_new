@@ -1927,3 +1927,146 @@ def api_get_sub_auto(
         "message": f"未找到用户名 {username} 对应的用户",
         "data": None
     }
+
+class UserRoleChangeRequest(BaseModel):
+    """用户身份转换请求（仅管理员可用）"""
+    original_sub: int = Field(..., gt=0, description="原用户自增主键ID，必须大于0")
+    original_role: str = Field(..., description="原用户角色：student/teacher/admin")
+    new_role: str = Field(..., description="新用户角色：student/teacher/admin")
+    new_business_id: str = Field(..., description="新角色对应的业务ID（如teacher_id/admin_id/student_id）")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "original_sub": 1,
+                "original_role": "student",
+                "new_role": "teacher",
+                "new_business_id": "t777"
+            }
+        }
+    }
+
+@router.post(
+    "/user/change-role",
+    summary="用户角色转换（仅管理员）",
+    description="管理员将指定用户从原角色转换为新角色，删除原表数据并在新表创建，仅管理员可操作",
+)
+def change_user_role(
+    payload: UserRoleChangeRequest,
+    db: pymysql.connections.Connection = Depends(get_db),
+    current_user: Optional[str] = Query(None, description="管理员信息(JSON字符串，包含 sub/username/roles)"),
+):
+    # 解析并验证当前操作用户
+    current_user_info = _parse_current_user(current_user)
+    login_user_id = current_user_info.get("sub", 0)
+    user_roles = current_user_info.get("roles", [])
+    if login_user_id <= 0:
+        raise HTTPException(status_code=401, detail="请先登录后再操作")
+    if "admin" not in user_roles and "管理员" not in user_roles:
+        raise HTTPException(status_code=403, detail="无权限执行角色转换：仅管理员可操作")
+    # 验证请求参数合法性
+    original_role = payload.original_role.strip().lower()
+    new_role = payload.new_role.strip().lower()
+    original_sub = payload.original_sub
+    new_business_id = payload.new_business_id.strip()
+    if not new_business_id:
+        raise HTTPException(status_code=400, detail="新业务ID（teacher_id/admin_id等）不能为空")
+    if original_role not in USER_TABLES:
+        raise HTTPException(status_code=400, detail=f"原角色不合法，仅支持：{list(USER_TABLES.keys())}")
+    if new_role not in USER_TABLES:
+        raise HTTPException(status_code=400, detail=f"新角色不合法，仅支持：{list(USER_TABLES.keys())}")
+    if original_role == new_role:
+        raise HTTPException(status_code=400, detail="原角色与新角色一致，无需转换")
+    cursor = None
+    try:
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        # 检查原用户是否存在
+        original_user = _fetch_user(cursor, original_sub, original_role)
+        if not original_user:
+            raise HTTPException(status_code=404, detail=f"未找到ID为{original_sub}的{original_role}用户")
+        # 查询原用户完整数据
+        original_table_info = USER_TABLES[original_role]
+        cursor.execute(
+            f"SELECT * FROM {original_table_info['table']} WHERE id = %s",
+            (original_sub,)
+        )
+        original_user_data = cursor.fetchone()
+        if not original_user_data:
+            raise HTTPException(status_code=404, detail=f"原{original_role}用户数据不存在")
+        # 检查新业务ID是否已存在
+        new_table_info = USER_TABLES[new_role]
+        cursor.execute(
+            f"SELECT 1 FROM {new_table_info['table']} WHERE {new_table_info['id_col']} = %s LIMIT 1",
+            (new_business_id,)
+        )
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail=f"新{new_role}的业务ID {new_business_id} 已存在")
+        # 插入新角色表
+        new_table = new_table_info["table"]
+        new_id_col = new_table_info["id_col"]
+        # 构建插入字段和值
+        insert_fields = [
+            new_id_col, "name", "phone", "email", "password", 
+            "school_id", "school_name", "department_id", "department_name", 
+            "group_id", "created_at", "updated_at"
+        ]
+        # 从原用户数据中取值，无则设为NULL
+        insert_values = [
+            new_business_id,
+            original_user_data.get("name", ""),
+            original_user_data.get("phone"),
+            original_user_data.get("email"),
+            original_user_data.get("password"),
+            original_user_data.get("school_id"),
+            original_user_data.get("school_name"),
+            original_user_data.get("department_id"),
+            original_user_data.get("department_name"),
+            original_user_data.get("group_id"),
+            datetime.now(),  # 新的创建时间
+            datetime.now()   # 新的更新时间
+        ]
+        # 针对admin表补充role字段
+        if new_role == "admin":
+            insert_fields.append("role")
+            insert_values.append("admin")  # 默认admin角色
+        # 执行插入
+        insert_placeholders = ", ".join(["%s"] * len(insert_fields))
+        cursor.execute(
+            f"""
+            INSERT INTO {new_table} ({', '.join(insert_fields)})
+            VALUES ({insert_placeholders})
+            """,
+            insert_values
+        )
+        # 获取新插入记录的自增ID
+        new_user_id = cursor.lastrowid
+        # 删除原角色表中的数据
+        cursor.execute(
+            f"DELETE FROM {original_table_info['table']} WHERE id = %s",
+            (original_sub,)
+        )
+        # 提交事务
+        db.commit()
+        return {
+            "code": 200,
+            "message": f"用户角色已从{original_role}成功转换为{new_role}",
+            "data": {
+                "original_sub": original_sub,
+                "original_role": original_role,
+                "new_role": new_role,
+                "new_business_id": new_business_id,  # 新的teacher_id/admin_id等
+                "new_sub": new_user_id  # 新表中的自增ID
+            }
+        }
+
+    except HTTPException:
+        raise
+    except pymysql.MySQLError as e:
+        db.rollback()
+        logger.error(f"角色转换数据库错误: {str(e)}")
+        if "Duplicate entry" in str(e):
+            raise HTTPException(status_code=400, detail=f"新{new_role}的业务ID {new_business_id} 已存在")
+        raise HTTPException(status_code=500, detail=f"角色转换失败：{str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
