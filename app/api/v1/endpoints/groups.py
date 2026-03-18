@@ -243,7 +243,7 @@ def list_groups(
                 ) AS reviewed_papers
             FROM `groups` g
             WHERE EXISTS (
-                SELECT 1 FROM group_members gm2 WHERE gm2.group_id = g.group_id AND gm2.member_type='teacher' AND gm2.member_id = %s AND gm2.is_active=1
+                SELECT 1 FROM group_members gm2 WHERE gm2.group_id = g.group_id AND gm2.member_id = %s AND gm2.is_active=1
             )
             AND (g.group_id LIKE %s OR g.group_name LIKE %s)
             ORDER BY g.created_at DESC
@@ -260,7 +260,7 @@ def list_groups(
             SELECT COUNT(*) AS total
             FROM `groups` g
             WHERE EXISTS (
-                SELECT 1 FROM group_members gm2 WHERE gm2.group_id = g.group_id AND gm2.member_type='teacher' AND gm2.member_id = %s AND gm2.is_active=1
+                SELECT 1 FROM group_members gm2 WHERE gm2.group_id = g.group_id AND gm2.member_id = %s AND gm2.is_active=1
             )
             AND (g.group_id LIKE %s OR g.group_name LIKE %s)
             """
@@ -807,32 +807,19 @@ async def update_group(
 
 @router.post(
     "/members",
-    summary="添加群组成员或获取教师负责的学生列表",
-    description="为指定群组添加成员（单个或批量），或获取教师负责的学生列表"
+    summary="添加群组成员",
+    description="为指定群组添加成员（学生或教师）"
 )
 async def add_group_member(
-    action: str = Query("add", description="操作类型: add(添加成员) 或 list_students(获取学生列表)", enum=["add", "list_students"]),
-    group_id: str | None = Query(None, description="群组ID（add操作时必填）"),
-    student_id: Optional[str] = Query(None, description="单个学生学号（add操作时可选）"),
-    student_ids: str | None = Query(None, description="批量添加学生学号列表，逗号分隔，例如: 2021001,2021002,2021003"),
-    teacher_id: Optional[str] = Query(None, description="教师工号（管理员查看特定教师学生时必填）"),
+    group_id: str = Query(..., description="群组ID"),
+    student_ids: Optional[str] = Query(None, description="邀请学生，填写一个或多个student_id，逗号分隔，例如: 2021001,2021002,2021003"),
+    teacher_ids: Optional[str] = Query(None, description="邀请教师，填写一个或多个teacher_id，逗号分隔，例如: 101,102,103"),
     current_user: str = Query(None, description="当前用户信息(JSON字符串)，示例: {\"sub\":1,\"roles\":[\"teacher\"],\"username\":\"teacher1\"}")
 ):
-    # 验证参数：当action为list_students时，不需要填写成员相关参数
-    if action == "list_students":
-        if student_id is not None:
-            raise HTTPException(status_code=400, detail="选择list_students操作时，不需要填写student_id参数")
-        if student_ids is not None:
-            raise HTTPException(status_code=400, detail="选择list_students操作时，不需要填写student_ids参数")
-        if group_id is not None:
-            raise HTTPException(status_code=400, detail="选择list_students操作时，不需要填写group_id参数")
-    # 当action为add时，需要提供成员ID或学生ID列表，且group_id必填
-    elif action == "add":
-        if not group_id:
-            raise HTTPException(status_code=400, detail="选择add操作时，必须填写group_id参数")
-        if student_id is None and student_ids is None:
-            raise HTTPException(status_code=400, detail="选择add操作时，必须提供student_id或student_ids参数")
-    logger.info(f"请求: group_id={group_id}, action={action}")
+    # 验证参数：必须提供学生ID或教师ID
+    if student_ids is None and teacher_ids is None:
+        raise HTTPException(status_code=400, detail="必须提供 student_ids 或 teacher_ids")
+    logger.info(f"请求: group_id={group_id}, student_ids={student_ids}, teacher_ids={teacher_ids}")
     cu = _parse_current_user(current_user)
     roles_norm = _normalize_roles(cu.get("roles", []))
     
@@ -842,65 +829,7 @@ async def add_group_member(
         # ensure caller identity exists
         _ensure_caller_identity(cursor, cu)
         
-        if action == "list_students":
-            # 获取教师负责的学生列表
-            if "admin" in roles_norm:
-                # 管理员需要输入教师ID来查看特定教师的学生
-                if not teacher_id:
-                    raise HTTPException(status_code=400, detail="管理员查看学生列表时，必须填写teacher_id参数")
-                # 验证教师是否存在并获取内部ID
-                cursor.execute("SELECT `id` FROM `teachers` WHERE `teacher_id` = %s", (teacher_id,))
-                teacher_row = cursor.fetchone()
-                if not teacher_row:
-                    raise HTTPException(status_code=404, detail=f"教师工号 {teacher_id} 不存在")
-                teacher_internal_id = teacher_row["id"] if isinstance(teacher_row, dict) else teacher_row[0]
-                # 查询该教师的学生
-                cursor.execute(
-                    """
-                    SELECT DISTINCT s.id, s.student_id, s.name, s.phone, s.email
-                    FROM students s
-                    INNER JOIN papers p ON s.id = p.owner_id
-                    WHERE p.teacher_id = %s
-                    ORDER BY s.name
-                    """,
-                    (teacher_internal_id,)
-                )
-                students = cursor.fetchall()
-                return {
-                    "action": "list_students",
-                    "teacher_id": teacher_id,
-                    "students": students,
-                    "total": len(students)
-                }
-            elif "teacher" in roles_norm or "教师" in roles_norm:
-                # 教师只能返回自己的学生
-                teacher_internal_id = cu.get("sub", 0)
-                # 通过 papers 表查询与该教师关联的学生
-                cursor.execute(
-                    """
-                    SELECT DISTINCT s.id, s.student_id, s.name, s.phone, s.email
-                    FROM students s
-                    INNER JOIN papers p ON s.id = p.owner_id
-                    WHERE p.teacher_id = %s
-                    ORDER BY s.name
-                    """,
-                    (teacher_internal_id,)
-                )
-                students = cursor.fetchall()
-                # 获取教师工号
-                cursor.execute("SELECT `teacher_id` FROM `teachers` WHERE `id` = %s", (teacher_internal_id,))
-                teacher_row = cursor.fetchone()
-                teacher_id = teacher_row["teacher_id"] if isinstance(teacher_row, dict) else teacher_row[0]
-                return {
-                    "action": "list_students",
-                    "teacher_id": teacher_id,
-                    "students": students,
-                    "total": len(students)
-                }
-            else:
-                raise HTTPException(status_code=403, detail="只有教师或管理员可获取学生列表")
-        
-        # 以下是 add 操作
+        # 检查群组是否存在
         cursor.execute("SELECT 1 FROM `groups` WHERE `group_id` = %s", (group_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="群组不存在")
@@ -909,103 +838,94 @@ async def add_group_member(
             # 管理员拥有所有权限
             pass
         elif "teacher" in roles_norm or "教师" in roles_norm:
-            # 教师可以管理群组，拉自己班级的学生
+            # 教师可以管理群组
             pass
         else:
             raise HTTPException(status_code=403, detail="只有教师或管理员可添加成员")
         
-        # 移除群主任命逻辑，不再需要群组管理员和群主设定
+        added_members = []
         
-        # 批量添加或单个添加
+        # 处理学生邀请
         if student_ids:
             # 批量添加学生
             student_id_list = [s.strip() for s in student_ids.split(",") if s.strip()]
-            if not student_id_list:
-                raise HTTPException(status_code=400, detail="student_ids 格式错误，请使用逗号分隔的学生学号")
-            
-            added_members = []
-            for sid in student_id_list:
-                # 检查学生是否存在并获取内部ID
-                cursor.execute("SELECT `id` FROM `students` WHERE `student_id` = %s", (sid,))
-                student_row = cursor.fetchone()
-                if not student_row:
-                    logger.warning(f"学生学号 {sid} 不存在，跳过")
-                    continue
-                student_internal_id = student_row["id"] if isinstance(student_row, dict) else student_row[0]
-                
-                # 检查师生关系：如果是教师操作，确保学生是该教师的学生
-                if "teacher" in roles_norm or "教师" in roles_norm:
-                    teacher_internal_id = cu.get("sub", 0)
-                    cursor.execute(
-                        "SELECT 1 FROM `papers` WHERE `owner_id` = %s AND `teacher_id` = %s",
-                        (student_internal_id, teacher_internal_id)
-                    )
-                    if not cursor.fetchone():
-                        logger.warning(f"学生学号 {sid} 不是该教师的学生，跳过")
+            if student_id_list:
+                for sid in student_id_list:
+                    # 检查学生是否存在并获取内部ID
+                    cursor.execute("SELECT `id` FROM `students` WHERE `student_id` = %s", (sid,))
+                    student_row = cursor.fetchone()
+                    if not student_row:
+                        logger.warning(f"学生学号 {sid} 不存在，跳过")
                         continue
-                
-                # 插入成员，所有成员默认为普通成员
-                cursor.execute(
-                    """
-                    INSERT INTO `group_members` (`group_id`, `member_id`, `member_type`, `is_active`, `joined_at`)
-                    VALUES (%s, %s, %s, 1, NOW())
-                    ON DUPLICATE KEY UPDATE `is_active` = 1, `updated_at`=NOW()
-                    """,
-                    (group_id, student_internal_id, "student"),
-                )
-                added_members.append({
-                    "member_id": student_internal_id,
-                    "student_id": sid,
-                    "member_type": "student"
-                })
-            
-            conn.commit()
-            return {
-                "group_id": group_id,
-                "action": "batch_add",
-                "added_members": added_members,
-                "total_added": len(added_members),
-                "message": f"成功添加 {len(added_members)} 名成员"
-            }
-        else:
-            # 单个添加成员
-            if student_id is None:
-                raise HTTPException(status_code=400, detail="必须提供 student_id 或 student_ids")
-            
-            # 检查学生是否存在并获取内部ID
-            cursor.execute("SELECT `id` FROM `students` WHERE `student_id` = %s", (student_id,))
-            student_row = cursor.fetchone()
-            if not student_row:
-                raise HTTPException(status_code=404, detail=f"学生学号 {student_id} 不存在")
-            student_internal_id = student_row["id"] if isinstance(student_row, dict) else student_row[0]
-            
-            # 检查师生关系：如果是教师操作，确保学生是该教师的学生
-            if "teacher" in roles_norm or "教师" in roles_norm:
-                teacher_internal_id = cu.get("sub", 0)
-                cursor.execute(
-                    "SELECT 1 FROM `papers` WHERE `owner_id` = %s AND `teacher_id` = %s",
-                    (student_internal_id, teacher_internal_id)
-                )
-                if not cursor.fetchone():
-                    raise HTTPException(status_code=403, detail="只能添加自己班级的学生")
-            
-            # insert as active member，所有成员默认为普通成员
-            cursor.execute(
-                """
-                INSERT INTO `group_members` (`group_id`, `member_id`, `member_type`, `is_active`, `joined_at`)
-                VALUES (%s, %s, %s, 1, NOW())
-                ON DUPLICATE KEY UPDATE `is_active` = 1, `updated_at`=NOW()
-                """,
-                (group_id, student_internal_id, "student"),
-            )
-            conn.commit()
-            return {
-                "group_id": group_id,
-                "member_id": student_internal_id,
-                "student_id": student_id,
-                "member_type": "student",
-                "message": "成员已添加/更新",
-            }
+                    student_internal_id = student_row["id"] if isinstance(student_row, dict) else student_row[0]
+                    
+                    # 检查师生关系：如果是教师操作，确保学生是该教师的学生
+                    if "teacher" in roles_norm or "教师" in roles_norm:
+                        teacher_internal_id = cu.get("sub", 0)
+                        cursor.execute(
+                            "SELECT 1 FROM `papers` WHERE `owner_id` = %s AND `teacher_id` = %s",
+                            (student_internal_id, teacher_internal_id)
+                        )
+                        if not cursor.fetchone():
+                            logger.warning(f"学生学号 {sid} 不是该教师的学生，跳过")
+                            continue
+                    
+                    # 插入成员，所有成员默认为普通成员
+                    cursor.execute(
+                        """
+                        INSERT INTO `group_members` (`group_id`, `member_id`, `member_type`, `is_active`, `joined_at`)
+                        VALUES (%s, %s, %s, 1, NOW())
+                        ON DUPLICATE KEY UPDATE `is_active` = 1, `updated_at`=NOW()
+                        """,
+                        (group_id, student_internal_id, "student"),
+                    )
+                    added_members.append({
+                        "member_id": student_internal_id,
+                        "student_id": sid,
+                        "member_type": "student"
+                    })
+        
+        # 处理教师邀请
+        if teacher_ids:
+            # 批量添加教师
+            teacher_id_list = [t.strip() for t in teacher_ids.split(",") if t.strip()]
+            if teacher_id_list:
+                for tid in teacher_id_list:
+                    # 检查教师是否存在并获取内部ID
+                    cursor.execute("SELECT `id` FROM `teachers` WHERE `teacher_id` = %s", (tid,))
+                    teacher_row = cursor.fetchone()
+                    if not teacher_row:
+                        logger.warning(f"教师工号 {tid} 不存在，跳过")
+                        continue
+                    teacher_internal_id = teacher_row["id"] if isinstance(teacher_row, dict) else teacher_row[0]
+                    
+                    # 插入成员，所有成员默认为普通成员
+                    cursor.execute(
+                        """
+                        INSERT INTO `group_members` (`group_id`, `member_id`, `member_type`, `is_active`, `joined_at`)
+                        VALUES (%s, %s, %s, 1, NOW())
+                        ON DUPLICATE KEY UPDATE `is_active` = 1, `updated_at`=NOW()
+                        """,
+                        (group_id, teacher_internal_id, "teacher"),
+                    )
+                    added_members.append({
+                        "member_id": teacher_internal_id,
+                        "teacher_id": tid,
+                        "member_type": "teacher"
+                    })
+        
+        if not added_members:
+            raise HTTPException(status_code=400, detail="没有有效的成员被添加")
+        
+        conn.commit()
+        return {
+            "group_id": group_id,
+            "action": "add_members",
+            "added_members": added_members,
+            "total_added": len(added_members),
+            "message": f"成功添加 {len(added_members)} 名成员"
+        }
+
     except HTTPException:
         raise
     except pymysql.MySQLError as e:
