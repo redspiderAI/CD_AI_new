@@ -1,7 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pathlib import Path
-from app.core.dependencies import get_current_user
 from app.services.oss import upload_file_to_oss
 import pymysql
 from datetime import datetime

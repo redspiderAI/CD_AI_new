@@ -9,7 +9,6 @@ import sys
 import shutil
 import subprocess
 import tempfile
-from app.core.dependencies import get_current_user
 from app.schemas.document import (
     PaperOut,
     PaperStatusOut,
@@ -1283,7 +1282,6 @@ def list_ddl(
             # 处理datetime对象转字符串
             ddl_time_str = record["ddl_time"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(record["ddl_time"], datetime) else record["ddl_time"]
             created_at_str = record["created_at"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(record["created_at"], datetime) else record["created_at"]
-            updated_at_str = record["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(record["updated_at"], datetime) else record["updated_at"]
             
             result.append(DDLOut(
                 ddlid=record["ddlid"],
@@ -1421,7 +1419,7 @@ def cleanup_expired_ddl(
                 # 提交事务
                 db.commit()
                 
-            except Exception as e:
+            except Exception:
                 # 回滚事务
                 if db:
                     db.rollback()
@@ -1486,8 +1484,8 @@ def delete_ddl(
             )
         
         # 获取group_id和ddl_time用于匹配消息
-        ddl_time_str = None
         group_id = None
+        ddl_time_str = None
         try:
             cursor.execute("SELECT group_id, ddl_time FROM ddl_management WHERE ddlid = %s", (ddlid,))
             row = cursor.fetchone()
@@ -1509,7 +1507,13 @@ def delete_ddl(
             cursor.execute(delete_messages_sql, (f'%\"ddlid\": {ddlid}%',))
             deleted_messages_count = cursor.rowcount
         
-        # 方式2：如果metadata方式没找到，尝试通过消息内容匹配
+        # 方式2：如果metadata方式没找到，通过group_id匹配
+        if deleted_messages_count == 0 and group_id:
+            delete_messages_sql = "DELETE FROM user_messages WHERE source = 'ddl' AND metadata LIKE %s"
+            cursor.execute(delete_messages_sql, (f'%\"group_id\": {group_id}%',))
+            deleted_messages_count = cursor.rowcount
+        
+        # 方式3：如果metadata方式没找到，尝试通过消息内容匹配
         if deleted_messages_count == 0 and ddl_time_str:
             delete_messages_sql = "DELETE FROM user_messages WHERE source = 'ddl' AND content LIKE %s"
             cursor.execute(delete_messages_sql, (f'%{ddl_time_str}%',))
