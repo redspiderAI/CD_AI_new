@@ -872,6 +872,103 @@ def update_paper_review(
 
 
 @router.get(
+    "/{paper_id}/review",
+    summary="查看论文审阅内容",
+    description="仅论文关联的学生（owner_id）或教师（teacher_id）可查看对应的审阅内容",
+    response_model=dict
+)
+def get_paper_review(
+    paper_id: int,
+    db: pymysql.connections.Connection = Depends(get_db),
+    current_user: Optional[str] = Query(None, description="登录用户信息(JSON字符串，包含 sub/username/roles)"),
+):
+    # 解析当前登录用户信息
+    current_user = _parse_current_user(current_user)
+    login_user_id = current_user.get("sub", 0)
+    login_user_roles = current_user.get("roles", [])
+    
+    # 1. 基础登录校验
+    if login_user_id <= 0:
+        raise HTTPException(status_code=401, detail="请先登录后再操作")
+    
+    cursor = None
+    try:
+        cursor = db.cursor()
+        
+        # 2. 查询论文基础信息（匹配papers表的实际字段：owner_id=学生ID，teacher_id=教师ID）
+        cursor.execute(
+            "SELECT id, owner_id, teacher_id FROM papers WHERE id = %s",
+            (paper_id,)
+        )
+        paper_row = cursor.fetchone()
+        if not paper_row:
+            raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 不存在")
+        
+        paper_db_id, paper_owner_id, paper_teacher_id = paper_row
+        
+        # 3. 权限校验：仅论文关联的教师/学生可查看
+        is_teacher = "teacher" in login_user_roles or "教师" in login_user_roles
+        is_student = "student" in login_user_roles or "学生" in login_user_roles
+        
+        permission_denied = True
+        # 教师权限：角色是教师 + 登录ID匹配论文的teacher_id
+        if is_teacher and login_user_id == paper_teacher_id:
+            permission_denied = False
+        # 学生权限：角色是学生 + 登录ID匹配论文的owner_id
+        if is_student and login_user_id == paper_owner_id:
+            permission_denied = False
+        
+        if permission_denied:
+            raise HTTPException(
+                status_code=403,
+                detail=f"无权限查看审阅：仅论文ID {paper_id} 关联的教师(ID:{paper_teacher_id})或学生(ID:{paper_owner_id})可查看"
+            )
+        
+        # 4. 查询审阅记录（移除teacher_name字段）
+        cursor.execute(
+            """
+            SELECT id, paper_id, teacher_id, review_content, 
+                   review_time, updated_time, created_at, updated_at 
+            FROM paper_reviews 
+            WHERE paper_id = %s LIMIT 1
+            """,
+            (paper_id,)
+        )
+        review_row = cursor.fetchone()
+        if not review_row:
+            raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 暂无审阅记录")
+        
+        # 5. 构造返回数据（格式化时间字段，移除teacher_name）
+        review_id, r_paper_id, r_teacher_id, r_review_content, \
+        r_review_time, r_updated_time, r_created_at, r_updated_at = review_row
+        
+        # 格式化datetime对象为字符串，兼容NULL值
+        def format_datetime(dt):
+            if isinstance(dt, datetime):
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return dt  # 若为NULL则直接返回
+        
+        return {
+            "message": "审阅内容查询成功",
+            "review_id": review_id,
+            "paper_id": r_paper_id,
+            "teacher_id": r_teacher_id,
+            "review_content": r_review_content,
+            "review_time": format_datetime(r_review_time),
+            "updated_time": format_datetime(r_updated_time),
+            "created_at": format_datetime(r_created_at),
+            "updated_at": format_datetime(r_updated_at)
+        }
+    
+    except pymysql.MySQLError as e:
+        raise HTTPException(status_code=500, detail=f"查询审阅失败：数据库操作错误 - {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
+
+@router.get(
     "/{paper_id}/versions",
     response_model=List[VersionOut],
     summary="查询论文版本列表",
