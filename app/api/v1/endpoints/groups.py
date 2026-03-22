@@ -1203,6 +1203,94 @@ async def get_group_members(
 
 
 @router.get(
+    "/students/{student_id}/teachers",
+    summary="获取学生所在群组的老师",
+    description="通过输入 student_id 对应 students 表里的 student_id, 来返回和这个学生同一个群组的老师的 id 对应于 teachers 表里的 id(自增 id)"
+)
+async def get_student_group_teachers(
+    student_id: str,
+    current_user: Optional[str] = Query(None, description='当前登录用户信息(JSON字符串)，示例: {"sub":1,"roles":["admin"],"username":"admin"}')
+):
+    """获取学生所在群组的老师"""
+    cu = _parse_current_user(current_user)
+    
+    conn = get_connection()
+    cursor = None
+    try:
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        # 确保用户存在且身份正确
+        _ensure_caller_identity(cursor, cu)
+        
+        # 验证学生是否存在并获取内部ID
+        cursor.execute("SELECT `id` FROM `students` WHERE `student_id` = %s", (student_id,))
+        student_row = cursor.fetchone()
+        if not student_row:
+            raise HTTPException(status_code=404, detail=f"学生学号 {student_id} 不存在")
+        student_internal_id = student_row["id"] if isinstance(student_row, dict) else student_row[0]
+        
+        # 获取学生所在的群组
+        cursor.execute("""
+            SELECT DISTINCT `group_id` 
+            FROM `group_members` 
+            WHERE `member_id` = %s AND `member_type` = 'student' AND `is_active` = 1
+        """, (student_internal_id,))
+        groups = cursor.fetchall()
+        if not groups:
+            return {"student_id": student_id, "teachers": []}
+        
+        # 提取群组ID列表
+        group_ids = [g["group_id"] if isinstance(g, dict) else g[0] for g in groups]
+        
+        # 获取这些群组中的教师成员
+        placeholders = ",".join(["%s"] * len(group_ids))
+        cursor.execute(f"""
+            SELECT DISTINCT `member_id` 
+            FROM `group_members` 
+            WHERE `group_id` IN ({placeholders}) AND `member_type` = 'teacher' AND `is_active` = 1
+        """, group_ids)
+        teacher_members = cursor.fetchall()
+        
+        if not teacher_members:
+            return {"student_id": student_id, "teachers": []}
+        
+        # 提取教师内部ID列表
+        teacher_internal_ids = [t["member_id"] if isinstance(t, dict) else t[0] for t in teacher_members]
+        
+        # 获取教师信息
+        if teacher_internal_ids:
+            placeholders = ",".join(["%s"] * len(teacher_internal_ids))
+            cursor.execute(f"""
+                SELECT `id`, `teacher_id` 
+                FROM `teachers` 
+                WHERE `id` IN ({placeholders})
+            """, teacher_internal_ids)
+            teachers = cursor.fetchall()
+        else:
+            teachers = []
+        
+        # 构建返回结果
+        teacher_list = []
+        for teacher in teachers:
+            teacher_list.append({
+                "id": teacher["id"] if isinstance(teacher, dict) else teacher[0],
+                "teacher_id": teacher["teacher_id"] if isinstance(teacher, dict) else teacher[1]
+            })
+        
+        return {
+            "student_id": student_id,
+            "teachers": teacher_list
+        }
+    except HTTPException:
+        raise
+    except pymysql.MySQLError as e:
+        raise HTTPException(status_code=500, detail=f"数据库错误：{str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+
+@router.get(
     "/{group_id}/students",
     summary="获取班级学生列表",
     description="获取指定班级的所有学生及其论文状态"
