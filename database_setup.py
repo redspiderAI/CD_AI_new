@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS `file_records` (
     `storage_path` VARCHAR(500) NOT NULL COMMENT '文件存储地址',
     `file_type` ENUM('document', 'essay') NOT NULL DEFAULT 'document' COMMENT '文件类型：document(文档)或essay(文章)',
     `version` INT NOT NULL DEFAULT 1 COMMENT '版本号',
+    `paper_id` INT DEFAULT NULL COMMENT '关联的论文ID',
     `remark` TEXT COMMENT '备注',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
@@ -194,7 +195,8 @@ CREATE TABLE IF NOT EXISTS `file_records` (
     KEY `idx_uploader_id` (`uploader_id`),
     KEY `idx_filename` (`filename`),
     KEY `idx_upload_time` (`upload_time`),
-    KEY `idx_file_type` (`file_type`)
+    KEY `idx_file_type` (`file_type`),
+    KEY `idx_paper_id` (`paper_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文件记录表';
 """
 
@@ -316,7 +318,6 @@ CREATE TABLE IF NOT EXISTS `annotations` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '批注ID',
     `paper_id` INT NOT NULL COMMENT '所属论文ID',
     `author_id` INT NOT NULL COMMENT '批注作者ID',
-    `author_name` VARCHAR(50) NOT NULL COMMENT '批注者姓名',
     `paragraph_id` VARCHAR(50) DEFAULT NULL COMMENT '段落ID（可选）',
     `coordinates` JSON DEFAULT NULL COMMENT '坐标信息（JSON格式）',
     `content` TEXT NOT NULL COMMENT '批注内容',

@@ -221,9 +221,9 @@ def query_notifications(
         params = []
         
         # 基础条件：只能查看自己发送的消息
-        # 使用更宽松的匹配方式，确保能找到消息
-        base_where += " AND (metadata LIKE %s OR metadata IS NULL OR metadata = '{}')"
-        params.append(f'%sender_id%{user_sub}%')
+        # 使用JSON_EXTRACT函数来准确匹配sender_id
+        base_where += " AND (JSON_EXTRACT(metadata, '$.sender_id') = %s OR metadata IS NULL OR metadata = '{}')"
+        params.append(user_sub)
         
         # 处理查询参数
         if target_id:
@@ -301,6 +301,8 @@ def query_notifications(
                     username=row[2] or "",
                     title=row[3],
                     content=row[4],
+                    target_user_id=row[1],  # 使用user_id作为target_user_id
+                    target_username=row[2] or "",  # 使用username作为target_username
                     operation_time=row[7].strftime("%Y-%m-%d %H:%M:%S") if row[7] else None,
                     status=row[6],  # unread/read/retracted
                     sender_id=sender_id
@@ -614,6 +616,67 @@ def get_received_notifications(
         raise
     except pymysql.MySQLError as e:
         raise HTTPException(status_code=500, detail=f"查询失败：{str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
+@router.delete(
+    "/{notification_id}",
+    summary="删除通知",
+    description="删除已推送的通知，仅管理员可用，直接从数据库中删除记录"
+)
+def delete_notification(
+    notification_id: int,
+    current_user: str = Query(..., description="当前用户信息(JSON字符串)，示例: {\"sub\":1,\"roles\":[\"admin\"],\"username\":\"admin1\"}"),
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    cursor = None
+    try:
+        # 权限校验
+        import urllib.parse
+        current_user = urllib.parse.unquote(current_user)
+        current_user_data = json.loads(current_user)
+        user_roles = current_user_data.get("roles", [])
+        user_sub = str(current_user_data.get("sub"))
+        
+        # 验证是否为管理员
+        if "admin" not in user_roles:
+            raise HTTPException(status_code=403, detail="只有管理员可以删除通知")
+        
+        # 验证管理员身份是否存在
+        cursor = db.cursor()
+        cursor.execute("SELECT id FROM admins WHERE id = %s", (user_sub,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=403, detail="管理员身份不存在")
+        
+        # 检查通知是否存在
+        cursor.execute("SELECT id FROM user_messages WHERE id = %s", (notification_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="通知不存在")
+        
+        # 执行删除操作
+        delete_sql = "DELETE FROM user_messages WHERE id = %s"
+        cursor.execute(delete_sql, (notification_id,))
+        
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="通知删除失败")
+        
+        db.commit()
+        
+        # 返回删除结果
+        return {
+            "message": "通知已成功删除",
+            "notification_id": notification_id
+        }
+        
+    except HTTPException:
+        raise
+    except pymysql.MySQLError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"通知删除失败：{str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除处理失败：{str(e)}")
     finally:
         if cursor:
             cursor.close()

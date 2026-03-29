@@ -179,19 +179,13 @@ def list_groups(
                 (
                     SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
-                (SELECT COUNT(DISTINCT p.id)
+                (
+                    SELECT COUNT(DISTINCT p.id)
                     FROM papers p
                     WHERE p.owner_id IN (
                         SELECT member_id FROM group_members WHERE group_id = g.group_id AND member_type='student' AND is_active=1
-                    ) AND p.status = '待审阅'
-                ) AS pending_papers,
-                (
-                    SELECT COUNT(DISTINCT p2.id)
-                    FROM papers p2
-                    WHERE p2.owner_id IN (
-                        SELECT member_id FROM group_members WHERE group_id = g.group_id AND member_type='student' AND is_active=1
-                    ) AND p2.status = '已审阅'
-                ) AS reviewed_papers
+                    )
+                ) AS paper_count
             FROM `groups` g
             WHERE (g.group_id LIKE %s OR g.group_name LIKE %s)
             ORDER BY g.created_at DESC
@@ -232,19 +226,13 @@ def list_groups(
                 (
                     SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
-                (SELECT COUNT(DISTINCT p.id)
+                (
+                    SELECT COUNT(DISTINCT p.id)
                     FROM papers p
                     WHERE p.owner_id IN (
                         SELECT member_id FROM group_members WHERE group_id = g.group_id AND member_type='student' AND is_active=1
-                    ) AND p.status = '待审阅'
-                ) AS pending_papers,
-                (
-                    SELECT COUNT(DISTINCT p2.id)
-                    FROM papers p2
-                    WHERE p2.owner_id IN (
-                        SELECT member_id FROM group_members WHERE group_id = g.group_id AND member_type='student' AND is_active=1
-                    ) AND p2.status = '已审阅'
-                ) AS reviewed_papers
+                    )
+                ) AS paper_count
             FROM `groups` g
             WHERE EXISTS (
                 SELECT 1 FROM group_members gm2 WHERE gm2.group_id = g.group_id AND gm2.member_id = %s AND gm2.is_active=1
@@ -279,8 +267,7 @@ def list_groups(
                 "group_name": row["group_name"],
                 "description": row.get("description"),
                 "student_count": int(row.get("student_count", 0) or 0),
-                "pending_papers": int(row.get("pending_papers", 0) or 0),
-                "reviewed_papers": int(row.get("reviewed_papers", 0) or 0),
+                "paper_count": int(row.get("paper_count", 0) or 0),
                 "created_at": row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if row.get("created_at") else None,
                 "updated_at": row["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if row.get("updated_at") else None,
             })
@@ -1326,6 +1313,8 @@ async def get_class_students(
             s.name as student_name,
             s.student_id as student_number,
             p.id as paper_id,
+            p.version as paper_version,
+            p.status as paper_status,
             p.updated_at as paper_update_time,
             (SELECT COUNT(*) FROM annotations WHERE paper_id = p.id) as annotation_count
         FROM
@@ -1372,6 +1361,8 @@ async def get_class_students(
                 if paper_info.get('student_id') == student_id:
                     student_info["papers"].append({
                         "paper_id": paper_id,
+                        "paper_version": paper_info.get('paper_version'),
+                        "paper_status": paper_info.get('paper_status'),
                         "paper_update_time": paper_info.get('paper_update_time').strftime("%Y-%m-%d %H:%M:%S") if paper_info.get('paper_update_time') else None,
                         "annotation_count": paper_info.get('annotation_count', 0)
                     })
@@ -1950,4 +1941,5 @@ def get_unuploaded_paper_members(
         if cursor:
             cursor.close()
         conn.close()
+
 
