@@ -1,31 +1,10 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Dict
 from urllib.parse import parse_qs, urlparse
 
 import pymysql
-
-
-def _load_dotenv(env_path: str = ".env") -> None:
-    """Load key=value pairs from .env into environment if not already set."""
-    path = Path(env_path)
-    if not path.is_file():
-        return
-
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-_load_dotenv()
+from app.config import settings
 
 
 def parse_mysql_url(url: str) -> Dict:
@@ -44,10 +23,7 @@ def parse_mysql_url(url: str) -> Dict:
     return dict(host=host, port=port, user=user, password=password, database=db, charset=charset)
 
 
-DEFAULT_DB_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+pymysql://root:sbtwsj1002@127.0.0.1:3306/cd_ai_db?charset=utf8mb4",
-)
+DEFAULT_DB_URL = settings.build_database_url()
 
 
 ACCOUNT_MAPPING_TABLE_SQL = """

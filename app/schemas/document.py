@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
+from datetime import datetime
 
 
 class PaperCreate(BaseModel):
@@ -38,7 +39,7 @@ class PaperStatusOut(BaseModel):
     status: str
     size: int
     updated_at: str
-from datetime import datetime
+
 
 
 class MaterialResponse(BaseModel):
@@ -49,7 +50,7 @@ class MaterialResponse(BaseModel):
     updated_at: Optional[datetime] = None
     paper_id: Optional[int] = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 class DDLCreate(BaseModel):
     teacher_id: int
@@ -62,4 +63,4 @@ class DDLOut(BaseModel):
     ddl_time: str
     created_at: Optional[str] = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)

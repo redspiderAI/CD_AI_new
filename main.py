@@ -4,7 +4,7 @@ FastAPI 应用主入口：集中创建应用实例、配置中间件与路由。
 
 from datetime import datetime
 
-import app.utils.logger as logger_config
+# import app.utils.logger as logger_config
 
 import uvicorn
 from fastapi import FastAPI
