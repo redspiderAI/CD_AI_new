@@ -1562,7 +1562,7 @@ def delete_user(
 @router.post(
     "/import",
     summary="一键导入用户",
-    description="上传 CSV/TSV 文件批量导入用户（列：username,user_type,full_name,role,password 可选）"
+    description="上传 CSV/TSV/XLSX 文件批量导入用户（列：用户名,角色类型,全名,密码）"
 )
 async def import_users(file: UploadFile = File(...), db: pymysql.connections.Connection = Depends(get_db)):
     filename = file.filename or ""
@@ -1575,7 +1575,6 @@ async def import_users(file: UploadFile = File(...), db: pymysql.connections.Con
         raise HTTPException(status_code=400, detail="上传文件为空")
 
     rows = []
-    required_col = "username"
     
     # 处理不同文件类型
     if lower_name.endswith(('.xlsx', '.xls')):
@@ -1590,8 +1589,13 @@ async def import_users(file: UploadFile = File(...), db: pymysql.connections.Con
         ]
         
         # 检查必填列
-        if required_col not in df.columns:
-            raise HTTPException(status_code=400, detail="文件缺少 username 列")
+        required_cols = ["用户名", "角色类型", "全名", "密码"]
+        extra = [col for col in df.columns if col not in required_cols]
+        if extra:
+            raise HTTPException(status_code=400, detail=f"文件表头只能包含：用户名,角色类型,全名,密码。发现额外列：{', '.join(extra)}")
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"文件表头必须为中文，缺少列：{', '.join(missing)}。请使用中文表头：用户名,角色类型,全名,密码")
         
         # 核心修复3：清理所有单元格的空值和空格，确保所有数据为字符串
         df = df.fillna("").astype(str)
@@ -1614,8 +1618,13 @@ async def import_users(file: UploadFile = File(...), db: pymysql.connections.Con
         reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
         if reader.fieldnames is None:
             raise HTTPException(status_code=400, detail="CSV 文件缺少标题行或文件为空")
-        if required_col not in reader.fieldnames:
-            raise HTTPException(status_code=400, detail="文件缺少 username 列")
+        required_cols = ["用户名", "角色类型", "全名", "密码"]
+        extra = [col for col in reader.fieldnames if col not in required_cols]
+        if extra:
+            raise HTTPException(status_code=400, detail=f"文件表头只能包含：用户名,角色类型,全名,密码。发现额外列：{', '.join(extra)}")
+        missing = [col for col in required_cols if col not in reader.fieldnames]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"文件表头必须为中文，缺少列：{', '.join(missing)}。请使用中文表头：用户名,角色类型,全名,密码")
         rows = list(reader)
 
     created, updated = 0, 0
@@ -1636,65 +1645,61 @@ async def import_users(file: UploadFile = File(...), db: pymysql.connections.Con
                 s = str(val)
                 return s.strip()
             
-            username = safe_get_str("username")
+            username = safe_get_str("用户名")
             if not username:
                 continue
             
-            user_type_val = safe_get_str("user_type") or "admin"
+            user_type_val = safe_get_str("角色类型")
+            if not user_type_val:
+                raise HTTPException(status_code=400, detail="文件中有用户类型为空")
             user_type = _normalize_user_type(user_type_val)
             info = USER_TABLES[user_type]
             table = info["table"]
-            phone_val = safe_get_str("phone")
-            phone = phone_val if phone_val else None
             email = "string"
-            full_name = safe_get_str("full_name")
-            role = safe_get_str("role") or default_role
-            password = safe_get_str("password") or default_password
+            full_name = safe_get_str("全名")
+            password = safe_get_str("密码") or default_password
             password_hash = get_password_hash(password)
             if not full_name:
                 full_name = username  # 默认使用username作为full_name
             if user_type == "admin":
                 cursor.execute(
                     """
-                    INSERT INTO admins (admin_id, name, phone, email, role, password)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO admins (admin_id, name, email, role, password)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         name = VALUES(name),
-                        phone = VALUES(phone),
                         email = VALUES(email),
                         role = VALUES(role),
                         password = VALUES(password),
                         updated_at = NOW()
                     """,
-                    (username, full_name, phone, email, role, password_hash),
+                    (username, full_name, email, default_role, password_hash),
                 )
             elif user_type == "student":
                 cursor.execute(
                     """
-                    INSERT INTO students (student_id, name, phone, email, password)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO students (student_id, name, email, password)
+                    VALUES (%s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         name = VALUES(name),
-                        phone = VALUES(phone),
                         email = VALUES(email),
                         password = VALUES(password),
                         updated_at = NOW()
                     """,
-                    (username, full_name, phone, email, password_hash),
+                    (username, full_name, email, password_hash),
                 )
             else:
                 cursor.execute(
                     """
-                    INSERT INTO teachers (teacher_id, name, phone, email, password)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO teachers (teacher_id, name, email, password)
+                    VALUES (%s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         name = VALUES(name),
-                        phone = VALUES(phone),
                         email = VALUES(email),
                         password = VALUES(password),
                         updated_at = NOW()
                     """,
-                    (username, full_name, phone, email, password_hash),
+                    (username, full_name, email, password_hash),
                 )
             if cursor.rowcount == 1:
                 created += 1
