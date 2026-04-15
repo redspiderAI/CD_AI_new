@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional
 import aiohttp
 import os
@@ -6,6 +7,7 @@ import sqlite3
 from datetime import datetime
 from urllib.parse import quote
 import pymysql
+import io
 
 from app.database import get_db
 from app.static_config import UPLOADS_MOUNT_PATH
@@ -234,16 +236,18 @@ async def download_report(task_id: int, type: str = "zip"):
                     raise HTTPException(status_code=response.status, detail=await response.text())
                 content = await response.read()
         
-        # 保存文件到本地
-        zip_path = os.path.join(UPLOADS_DIR, f"task_{task_id}.zip")
-        with open(zip_path, "wb") as f:
-            f.write(content)
+        # 创建内存中的文件对象
+        file_buffer = io.BytesIO(content)
+        file_buffer.seek(0)
         
-        # 返回文件路径
-        return {
-            "message": "Download successful",
-            "file_path": zip_path
-        }
+        # 返回流式响应
+        return StreamingResponse(
+            file_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=task_{task_id}.zip"
+            }
+        )
         
     except HTTPException:
         raise
