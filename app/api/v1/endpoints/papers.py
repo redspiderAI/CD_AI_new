@@ -167,6 +167,16 @@ async def upload_paper(
             status_code=403,
             detail="无权限上传：论文归属者ID必须与当前登录用户ID一致"
         )
+    # 检查学生是否已经上传过论文
+    cursor = None
+    try:
+        cursor = db.cursor()
+        cursor.execute("SELECT id FROM papers WHERE owner_id = %s", (owner_id,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="每个学生只能上传一篇论文")
+    finally:
+        if cursor:
+            cursor.close()
     # 验证文件扩展名
     if not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="仅支持 .docx 格式")
@@ -378,7 +388,7 @@ async def update_paper(
             )
         )
         db.commit()
-        return PaperOut(id=paper_id, owner_id=paper_owner_id, teacher_id=teacher_id, latest_version=version, oss_key=oss_key)
+        return PaperOut(id=paper_id, owner_id=paper_owner_id, teacher_id=teacher_id, latest_version=version, oss_key=oss_key, pdf_oss_key=pdf_oss_key)
     except pymysql.MySQLError as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"数据库操作失败: {str(e)}")

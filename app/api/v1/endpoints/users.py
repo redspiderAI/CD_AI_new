@@ -1359,6 +1359,9 @@ def create_teacher(payload: TeacherCreate, db: pymysql.connections.Connection = 
         username = payload.username.strip()
         if not username:
             raise HTTPException(status_code=400, detail="username 不能为空")
+        # 校验教师工号第一个字符必须是 't'
+        if not username.startswith('t') and not username.startswith('T'):
+            raise HTTPException(status_code=400, detail="教师username第一个字符必须是 't' 或 'T'")
         # 处理默认值
         full_name = payload.full_name or username
         raw_password = payload.password or "123456"
@@ -1420,6 +1423,9 @@ def create_admin(payload: AdminCreate, db: pymysql.connections.Connection = Depe
         username = payload.username.strip()
         if not username:
             raise HTTPException(status_code=400, detail="username 不能为空")
+        # 校验管理员账号第一个字符必须是 'a'
+        if not username.startswith('a') and not username.startswith('A'):
+            raise HTTPException(status_code=400, detail="管理员username第一个字符必须是 'a' 或 'A'")
         # 处理默认值
         full_name = payload.full_name or username
         raw_password = payload.password or "123456"
@@ -1569,7 +1575,7 @@ def delete_user(
 @router.post(
     "/import",
     summary="一键导入用户",
-    description="上传 CSV/TSV 文件批量导入用户（列：username,user_type,full_name,role,password 可选）"
+    description="上传 CSV/TSV/XLSX 文件批量导入用户（列：用户名,角色类型,全名,密码）"
 )
 async def import_users(file: UploadFile = File(...), db: pymysql.connections.Connection = Depends(get_db)):
     filename = file.filename or ""
