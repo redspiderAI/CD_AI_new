@@ -220,6 +220,9 @@ def list_groups(
                     SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
                 (
+                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
+                ) AS teacher_count,
+                (
                     SELECT COUNT(DISTINCT p.id)
                     FROM papers p
                     WHERE p.owner_id IN (
@@ -267,6 +270,9 @@ def list_groups(
                     SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
                 (
+                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
+                ) AS teacher_count,
+                (
                     SELECT COUNT(DISTINCT p.id)
                     FROM papers p
                     WHERE p.owner_id IN (
@@ -307,6 +313,7 @@ def list_groups(
                 "group_name": row["group_name"],
                 "description": row.get("description"),
                 "student_count": int(row.get("student_count", 0) or 0),
+                "teacher_count": int(row.get("teacher_count", 0) or 0),
                 "paper_count": int(row.get("paper_count", 0) or 0),
                 "created_at": row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if row.get("created_at") else None,
                 "updated_at": row["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if row.get("updated_at") else None,
