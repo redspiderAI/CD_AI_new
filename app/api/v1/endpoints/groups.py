@@ -217,10 +217,16 @@ def list_groups(
                 g.created_at,
                 g.updated_at,
                 (
-                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
+                    SELECT COUNT(DISTINCT gm.member_id)
+                    FROM group_members gm
+                    JOIN students s ON s.id = gm.member_id
+                    WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
                 (
-                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
+                    SELECT COUNT(DISTINCT gm.member_id)
+                    FROM group_members gm
+                    JOIN teachers t ON t.id = gm.member_id
+                    WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
                 ) AS teacher_count,
                 (
                     SELECT COUNT(DISTINCT p.id)
@@ -267,10 +273,16 @@ def list_groups(
                 g.created_at,
                 g.updated_at,
                 (
-                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
+                    SELECT COUNT(DISTINCT gm.member_id)
+                    FROM group_members gm
+                    JOIN students s ON s.id = gm.member_id
+                    WHERE gm.group_id = g.group_id AND gm.member_type='student' AND gm.is_active=1
                 ) AS student_count,
                 (
-                    SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
+                    SELECT COUNT(DISTINCT gm.member_id)
+                    FROM group_members gm
+                    JOIN teachers t ON t.id = gm.member_id
+                    WHERE gm.group_id = g.group_id AND gm.member_type='teacher' AND gm.is_active=1
                 ) AS teacher_count,
                 (
                     SELECT COUNT(DISTINCT p.id)
