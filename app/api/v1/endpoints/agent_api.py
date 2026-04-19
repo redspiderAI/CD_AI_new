@@ -338,13 +338,26 @@ async def request_agent_permission(
         if not ("student" in roles or "学生" in roles):
             raise HTTPException(status_code=403, detail="仅学生可以申请智能体使用权限")
         
-        # 获取学生信息
+        if not user_id:
+            raise HTTPException(status_code=400, detail="用户信息中缺少 sub 字段")
+        
+        # 获取学生信息，并以 students.student_id 作为 username 存储
         cursor = db.cursor()
-        cursor.execute("SELECT name, student_id FROM students WHERE id = %s", (user_id,))
+        cursor.execute("SELECT student_id, name FROM students WHERE id = %s", (user_id,))
         student = cursor.fetchone()
         if not student:
             raise HTTPException(status_code=404, detail="学生信息不存在")
-        student_name, student_number = student
+        student_number, student_name = student
+        
+        if not student_number:
+            raise HTTPException(status_code=400, detail="学生学号不存在，无法保存 username")
+        
+        # 确保 student_number 是字符串
+        student_number = str(student_number)
+        
+        # 打印调试信息
+        print(f"DEBUG: user_info = {user_info}")
+        print(f"DEBUG: student_number = {student_number}")
         
         # 构建消息内容
         message_title = "智能体使用权限申请"
@@ -380,7 +393,7 @@ async def request_agent_permission(
             """,
             (
                 admin_id,  # 接收者ID（管理员）
-                "",  # 接收者用户名（可为空）
+                student_number,  # 发送者学号（学生的student_id）
                 message_title,
                 message_content,
                 "system",  # 消息来源
@@ -566,6 +579,11 @@ async def handle_permission_request(
                 now_str,
                 now_str
             )
+        )
+        feedback_message_row_id = cursor.lastrowid
+        cursor.execute(
+            "UPDATE user_messages SET username = %s WHERE id = %s",
+            (student_id, feedback_message_row_id)
         )
         
         db.commit()
