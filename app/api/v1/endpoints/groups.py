@@ -11,6 +11,7 @@ import io
 import zipfile
 from app.services.oss import get_file_from_oss
 import pandas as pd
+from app.core.security import get_password_hash
 
 router = APIRouter()
 
@@ -20,14 +21,9 @@ class CurrentUser(BaseModel):
     username: str
     roles: list[str]
 
-
 class RequestWithCurrentUser(BaseModel):
     """包含current_user的通用请求体"""
     current_user: CurrentUser
-
-
-
-
 
 class GroupMember(BaseModel):
     """群组成员增删请求体"""
@@ -38,15 +34,10 @@ class GroupMember(BaseModel):
     student_ids: list[int] | None = None  # 批量添加时的学生ID列表
     current_user: CurrentUser
 
-
 class GroupUpdate(BaseModel):
     group_name: str | None = None
     teacher_id: str | None = None
     description: str | None = None
-
-
-
-
 
 def _parse_current_user(current_user: Optional[dict|str]) -> dict:
     """Normalize current_user input to dict with keys: sub, username, roles"""
@@ -405,7 +396,7 @@ async def import_groups(
     # 数据解析
     try:
         import_data = []
-        required_cols = {"群组编号", "群组名称", "教师工号", "学生学号", "学生姓名"}
+        required_cols = {"群组编号", "群组名称", "教师工号", "教师姓名", "学生学号", "学生姓名"}
         
         # 处理不同文件类型
         if file.filename.lower().endswith('.xlsx'):
@@ -438,6 +429,7 @@ async def import_groups(
                         "group_id": group_id_str,
                         "group_name": str(row_dict["群组名称"]) if row_dict["群组名称"] is not None else "",
                         "teacher_id": str(row_dict["教师工号"]) if row_dict["教师工号"] is not None else "",
+                        "teacher_name": str(row_dict["教师姓名"]) if row_dict["教师姓名"] is not None else "",
                         "student_id": str(row_dict["学生学号"]) if row_dict["学生学号"] is not None else "",
                         "student_name": str(row_dict["学生姓名"]) if row_dict["学生姓名"] is not None else ""
                     })
@@ -484,6 +476,7 @@ async def import_groups(
                         "group_id": group_id_str,
                         "group_name": row_dict["群组名称"],
                         "teacher_id": row_dict["教师工号"],
+                        "teacher_name": row_dict["教师姓名"],
                         "student_id": row_dict["学生学号"],
                         "student_name": row_dict["学生姓名"]
                     })
@@ -508,20 +501,51 @@ async def import_groups(
                     ON DUPLICATE KEY UPDATE `group_name`=VALUES(`group_name`), `teacher_id`=VALUES(`teacher_id`), `description`=VALUES(`description`)
                 """, (item["group_id"], item["group_name"], item["teacher_id"], None))
                 
-                # 验证教师是否存在
+                # 检查并创建教师（如果不存在）
                 cursor.execute("SELECT `id` FROM `teachers` WHERE `teacher_id` = %s", (item["teacher_id"],))
                 teacher_row = cursor.fetchone()
                 if not teacher_row:
-                    raise HTTPException(status_code=404, detail=f"教师工号 {item['teacher_id']} 不存在")
+                    # 自动创建教师
+                    default_password = "123456"
+                    password_hash = get_password_hash(default_password)
+                    email = "string"
+                    cursor.execute("""
+                        INSERT INTO teachers (teacher_id, name, email, password)
+                        VALUES (%s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            name = VALUES(name),
+                            email = VALUES(email),
+                            password = VALUES(password),
+                            updated_at = NOW()
+                    """, (item["teacher_id"], item["teacher_name"], email, password_hash))
+                    # 获取新创建的教师ID
+                    cursor.execute("SELECT `id` FROM `teachers` WHERE `teacher_id` = %s", (item["teacher_id"],))
+                    teacher_row = cursor.fetchone()
                 teacher_id = teacher_row[0]
                 
-                # 验证学生是否存在并检查姓名是否匹配
+                # 检查并创建学生（如果不存在）
                 cursor.execute("SELECT `id`, `name` FROM `students` WHERE `student_id` = %s", (item["student_id"],))
                 student_row = cursor.fetchone()
                 if not student_row:
-                    raise HTTPException(status_code=404, detail=f"学生学号 {item['student_id']} 不存在")
+                    # 自动创建学生
+                    default_password = "123456"
+                    password_hash = get_password_hash(default_password)
+                    email = "string"
+                    cursor.execute("""
+                        INSERT INTO students (student_id, name, email, password)
+                        VALUES (%s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            name = VALUES(name),
+                            email = VALUES(email),
+                            password = VALUES(password),
+                            updated_at = NOW()
+                    """, (item["student_id"], item["student_name"], email, password_hash))
+                    # 获取新创建的学生ID
+                    cursor.execute("SELECT `id`, `name` FROM `students` WHERE `student_id` = %s", (item["student_id"],))
+                    student_row = cursor.fetchone()
                 student_id = student_row[0]
                 student_name = student_row[1]
+                # 检查姓名是否匹配
                 if student_name != item["student_name"]:
                     raise HTTPException(status_code=400, detail=f"学生学号 {item['student_id']} 与姓名 {item['student_name']} 不匹配，数据库中姓名为 {student_name}")
                 
@@ -562,6 +586,207 @@ async def import_groups(
     return {
         "imported": imported_count,
         "message": f"成功识别{imported_count}条有效师生关系，上传文件已存档",
+        "operated_by": current_user["username"],
+        "operated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "uploaded_file": file.filename,
+        "file_format": file.filename.lower().split('.')[-1],
+    }
+
+
+@router.post(
+    "/validate",
+    summary="验证师生信息存在性",
+    description="上传 TSV/CSV/XLSX 文件验证教师和学生是否在数据库中存在"
+)
+async def validate_teachers_students(
+    file: UploadFile = File(...),
+    current_user: Optional[str] = Query(None),
+):
+    """
+    验证上传表格中的教师和学生是否都在数据库中存在
+    - 检查教师工号对应的教师是否存在
+    - 检查学生学号对应的学生是否存在
+    - 返回验证结果，包括全存在或缺失的教师/学生信息
+    """
+    try:
+        if isinstance(current_user, str):
+            # 解码URL编码的字符串
+            import urllib.parse
+            current_user = urllib.parse.unquote(current_user)
+            if current_user.strip():
+                # 解析为字典
+                current_user = json.loads(current_user)
+            else:
+                current_user = None
+        if not isinstance(current_user, dict):
+            current_user = {"sub": 0, "username": "", "roles": []}
+    except (json.JSONDecodeError, Exception) as e:
+        logger.error(f"解析current_user失败: {str(e)}")
+        current_user = {"sub": 0, "username": "", "roles": []}
+
+    # 移除权限校验，简化接口使用
+    # 允许所有用户使用此验证接口
+    current_user = current_user or {"username": "anonymous"}
+
+    # 基础文件格式校验
+    supported_formats = ('.tsv', '.csv', '.xlsx')
+    if not file.filename.lower().endswith(supported_formats):
+        logger.warning(f"用户{current_user['username']}上传非支持文件：{file.filename}，支持格式：{supported_formats}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"请上传表格文件（{', '.join(supported_formats)}）"
+        )
+    content = await file.read()
+    if not content:
+        logger.warning(f"用户{current_user['username']}上传空文件：{file.filename}")
+        raise HTTPException(status_code=400, detail="上传文件为空，无有效数据")
+    
+    # 数据解析
+    try:
+        import_data = []
+        required_cols = {"群组编号", "群组名称", "教师工号", "教师姓名", "学生学号", "学生姓名"}
+        
+        # 处理不同文件类型
+        if file.filename.lower().endswith('.xlsx'):
+            # 处理Excel文件
+            df = pd.read_excel(io.BytesIO(content))
+            # 转换列名
+            df.columns = [col.strip() for col in df.columns]
+            # 检查必填列
+            missing_cols = required_cols - set(df.columns)
+            if missing_cols:
+                logger.error(f"用户{current_user['username']}上传文件缺少必填列：{missing_cols}")
+                raise HTTPException(status_code=400, detail=f"文件缺少必填列：{', '.join(missing_cols)}")
+            # 处理数据
+            for index, row in df.iterrows():
+                row_dict = row.to_dict()
+                # 检查所有必填列都有值
+                has_all_required = True
+                for col in required_cols:
+                    val = row_dict.get(col)
+                    if val is None or (isinstance(val, float) and pd.isna(val)):
+                        has_all_required = False
+                        break
+                if has_all_required:
+                    group_id_str = str(row_dict["群组编号"]) if row_dict["群组编号"] is not None else ""
+                    # 验证群组编号只能是数字
+                    if not group_id_str.isdigit():
+                        logger.warning(f"第{index+2}行群组编号 {group_id_str} 包含非数字字符，跳过该行")
+                        continue
+                    import_data.append({
+                        "group_id": group_id_str,
+                        "group_name": str(row_dict["群组名称"]) if row_dict["群组名称"] is not None else "",
+                        "teacher_id": str(row_dict["教师工号"]) if row_dict["教师工号"] is not None else "",
+                        "teacher_name": str(row_dict["教师姓名"]) if row_dict["教师姓名"] is not None else "",
+                        "student_id": str(row_dict["学生学号"]) if row_dict["学生学号"] is not None else "",
+                        "student_name": str(row_dict["学生姓名"]) if row_dict["学生姓名"] is not None else ""
+                    })
+        else:
+            # 处理CSV/TSV文件
+            delimiter = '\t' if file.filename.lower().endswith('.tsv') else ','  
+            
+            try:
+                text_content = content.decode('utf-8-sig')  # 自动处理UTF-8 BOM
+            except UnicodeDecodeError:
+                try:
+                    text_content = content.decode('gbk')  # 尝试GBK编码
+                except UnicodeDecodeError:
+                    raise Exception("文件编码不支持，请使用UTF-8或GBK编码保存文件")
+            
+            lines = [line.strip() for line in text_content.split('\n') if line.strip()]
+            if not lines:
+                raise Exception("文件无有效文本内容")
+            
+            headers = [h.strip() for h in lines[0].split(delimiter) if h.strip()]
+            logger.info(f"解析到的表头: {headers}")
+            missing_cols = required_cols - set(headers)
+            if missing_cols:
+                logger.error(f"用户{current_user['username']}上传文件缺少必填列：{missing_cols}")
+                raise HTTPException(status_code=400, detail=f"文件缺少必填列：{', '.join(missing_cols)}")
+            
+            for line_num, line in enumerate(lines[1:], start=2):
+                row_values = [v.strip() for v in line.split(delimiter) if v.strip()]
+
+                row_len = len(row_values)
+                header_len = len(headers)
+                if row_len != header_len:
+                    logger.warning(f"第{line_num}行列数异常（表头{header_len}列，当前行{row_len}列），跳过该行")
+                    continue
+                row_dict = dict(zip(headers, row_values))
+
+                if all([row_dict.get(col) for col in required_cols]):
+                    group_id_str = row_dict["群组编号"]
+                    # 验证群组编号只能是数字
+                    if not group_id_str.isdigit():
+                        logger.warning(f"第{line_num}行群组编号 {group_id_str} 包含非数字字符，跳过该行")
+                        continue
+                    import_data.append({
+                        "group_id": group_id_str,
+                        "group_name": row_dict["群组名称"],
+                        "teacher_id": row_dict["教师工号"],
+                        "teacher_name": row_dict["教师姓名"],
+                        "student_id": row_dict["学生学号"],
+                        "student_name": row_dict["学生姓名"]
+                    })
+        
+        # 数据清洗结果校验
+        if not import_data:
+            logger.warning(f"用户{current_user['username']}上传文件无有效师生关系数据")
+            raise HTTPException(status_code=400, detail="文件中无有效师生关系数据")
+        
+        # 验证师生是否存在
+        missing_teachers = set()
+        missing_students = set()
+        validated_count = 0
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        try:
+            # 处理每条数据
+            for item in import_data:
+                # 检查教师是否存在
+                cursor.execute("SELECT 1 FROM `teachers` WHERE `teacher_id` = %s", (item["teacher_id"],))
+                teacher_exists = cursor.fetchone() is not None
+                if not teacher_exists:
+                    missing_teachers.add(item["teacher_id"])
+                
+                # 检查学生是否存在
+                cursor.execute("SELECT 1 FROM `students` WHERE `student_id` = %s", (item["student_id"],))
+                student_exists = cursor.fetchone() is not None
+                if not student_exists:
+                    missing_students.add(item["student_id"])
+                
+                if teacher_exists and student_exists:
+                    validated_count += 1
+            
+            # 构建返回结果
+            if not missing_teachers and not missing_students:
+                result = {
+                    "status": "all_exist",
+                    "message": "所有教师工号和学生学号均在数据库中存在"
+                }
+            else:
+                result = {
+                    "status": "missing",
+                    "message": "部分教师工号或学生学号在数据库中不存在",
+                    "missing_teacher_ids": list(missing_teachers),
+                    "missing_student_ids": list(missing_students)
+                }
+            
+            logger.info(f"验证完成：{validated_count}/{len(import_data)}条记录验证通过")
+        finally:
+            cursor.close()
+            conn.close()
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"用户{current_user['username']}验证失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"数据验证失败：{str(e)}")
+    
+    # 返回验证结果
+    return {
+        **result,
         "operated_by": current_user["username"],
         "operated_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "uploaded_file": file.filename,
