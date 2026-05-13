@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS `students` (
     `school_name` VARCHAR(128) NULL COMMENT '学校名称',
     `department_id` BIGINT UNSIGNED NULL COMMENT '所属院系ID',
     `department_name` VARCHAR(128) NULL COMMENT '院系名称',
+    `major` VARCHAR(128) NULL COMMENT '专业',
     `group_id` BIGINT UNSIGNED NULL COMMENT '所属群组ID',
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
@@ -259,6 +260,31 @@ CREATE TABLE IF NOT EXISTS `papers` (
     KEY `idx_status` (`status`),
     KEY `idx_operated_time` (`operated_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='论文信息表';
+"""
+
+
+PAPER_GRADES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `paper_grades` (
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID',
+    `paper_id` INT NOT NULL COMMENT '论文ID',
+    `paper_title` VARCHAR(255) NOT NULL COMMENT '论文题目',
+    `topic_significance_score` DECIMAL(5,2) DEFAULT NULL COMMENT '选题意义评分',
+    `logical_ability_score` DECIMAL(5,2) DEFAULT NULL COMMENT '逻辑能力评分',
+    `knowledge_application_score` DECIMAL(5,2) DEFAULT NULL COMMENT '综合应用知识能力评分',
+    `problem_analysis_solution_score` DECIMAL(5,2) DEFAULT NULL COMMENT '分析解决问题能力评分',
+    `academic_norm_score` DECIMAL(5,2) DEFAULT NULL COMMENT '学术规范评分',
+    `teacher_total_score` DECIMAL(5,2) DEFAULT NULL COMMENT '教师评分总分',
+    `literature_review_translation_score` DECIMAL(5,2) DEFAULT NULL COMMENT '文献综述和论文翻译成绩',
+    `proposal_report_score` DECIMAL(5,2) DEFAULT NULL COMMENT '开题报告成绩',
+    `proposal_defense_score` DECIMAL(5,2) DEFAULT NULL COMMENT '开题答辩成绩',
+    `final_score` DECIMAL(5,2) DEFAULT NULL COMMENT '总评',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uniq_paper_grades_paper_id` (`paper_id`),
+    KEY `idx_paper_grades_final_score` (`final_score`),
+    CONSTRAINT `fk_paper_grades_paper_id` FOREIGN KEY (`paper_id`) REFERENCES `papers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='论文评分成绩表';
 """
 
 TASKS_TABLE_SQL = """
@@ -460,6 +486,7 @@ def init_db(database_url: str | None = None) -> None:
                 GROUP_MEMBERS_TABLE_SQL,
                 TASKS_TABLE_SQL,
                 PAPERS_TABLE_SQL,
+                PAPER_GRADES_TABLE_SQL,
                 PAPERS_HISTORY_TABLE_SQL,
                 PAPER_REVIEWS_TABLE_SQL,
                 ANNOTATIONS_TABLE_SQL,
@@ -473,7 +500,7 @@ def init_db(database_url: str | None = None) -> None:
         print(
             "Tables ensured: account_mapping, schools, departments, students, teachers, admins, "
             "user_agent_permissions, file_records, groups, group_members, tasks, "
-            "papers, papers_history, paper_reviews, annotations, ddl_management, templates, "
+            "papers, paper_grades, papers_history, paper_reviews, annotations, ddl_management, templates, "
             "user_messages, user_sessions, operation_logs"
         )
     finally:
@@ -544,6 +571,7 @@ TABLE_COLUMN_DEFINITIONS = {
         "school_name": "`school_name` VARCHAR(128) NULL COMMENT '学校名称'",
         "department_id": "`department_id` BIGINT UNSIGNED NULL COMMENT '所属院系ID'",
         "department_name": "`department_name` VARCHAR(128) NULL COMMENT '院系名称'",
+        "major": "`major` VARCHAR(128) NULL COMMENT '专业'",
         "group_id": "`group_id` BIGINT UNSIGNED NULL COMMENT '所属群组ID'",
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
@@ -639,6 +667,23 @@ TABLE_COLUMN_DEFINITIONS = {
         "operated_time": "`operated_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间'",
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'",
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
+    },
+    "paper_grades": {
+        "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID'",
+        "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
+        "paper_title": "`paper_title` VARCHAR(255) NOT NULL COMMENT '论文题目'",
+        "topic_significance_score": "`topic_significance_score` DECIMAL(5,2) DEFAULT NULL COMMENT '选题意义评分'",
+        "logical_ability_score": "`logical_ability_score` DECIMAL(5,2) DEFAULT NULL COMMENT '逻辑能力评分'",
+        "knowledge_application_score": "`knowledge_application_score` DECIMAL(5,2) DEFAULT NULL COMMENT '综合应用知识能力评分'",
+        "problem_analysis_solution_score": "`problem_analysis_solution_score` DECIMAL(5,2) DEFAULT NULL COMMENT '分析解决问题能力评分'",
+        "academic_norm_score": "`academic_norm_score` DECIMAL(5,2) DEFAULT NULL COMMENT '学术规范评分'",
+        "teacher_total_score": "`teacher_total_score` DECIMAL(5,2) DEFAULT NULL COMMENT '教师评分总分'",
+        "literature_review_translation_score": "`literature_review_translation_score` DECIMAL(5,2) DEFAULT NULL COMMENT '文献综述和论文翻译成绩'",
+        "proposal_report_score": "`proposal_report_score` DECIMAL(5,2) DEFAULT NULL COMMENT '开题报告成绩'",
+        "proposal_defense_score": "`proposal_defense_score` DECIMAL(5,2) DEFAULT NULL COMMENT '开题答辩成绩'",
+        "final_score": "`final_score` DECIMAL(5,2) DEFAULT NULL COMMENT '总评'",
+        "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
+        "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
     "papers_history": {
         "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID'",
@@ -812,6 +857,10 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_status ON `papers` (status)",
         "CREATE INDEX idx_operated_time ON `papers` (operated_time)"
     ],
+    "paper_grades": [
+        "CREATE UNIQUE INDEX uniq_paper_grades_paper_id ON `paper_grades` (paper_id)",
+        "CREATE INDEX idx_paper_grades_final_score ON `paper_grades` (final_score)"
+    ],
     "papers_history": [
         "CREATE INDEX idx_papers_history_paper_id ON `papers_history` (paper_id)",
         "CREATE INDEX idx_papers_history_version ON `papers_history` (version)",
@@ -883,6 +932,7 @@ def sync_schema(database_url: str | None = None) -> None:
                 GROUPS_TABLE_SQL,
                 GROUP_MEMBERS_TABLE_SQL,
                 PAPERS_TABLE_SQL,
+                PAPER_GRADES_TABLE_SQL,
                 PAPERS_HISTORY_TABLE_SQL,
                 PAPER_REVIEWS_TABLE_SQL,
                 ANNOTATIONS_TABLE_SQL,
