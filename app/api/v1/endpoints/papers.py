@@ -1791,23 +1791,47 @@ def update_ddl(
                 pass
 
 
-@router.get(
-    "/{paper_id}/student-basic-info",
-    response_model=Dict,
-    summary="获取论文所属学生基本信息",
-    description="输入论文ID，查询论文所属学生、指导教师及论文题目信息"
-)
-def get_paper_student_basic_info(
-    paper_id: int,
-    db: pymysql.connections.Connection = Depends(get_db),
-):
-    if not isinstance(paper_id, int) or paper_id <= 0:
-        raise HTTPException(status_code=400, detail="paper_id必须是正整数")
-
+def _fetch_paper_student_basic_info(
+    db: pymysql.connections.Connection,
+    paper_id: Optional[int] = None,
+    student_id: Optional[str] = None,
+) -> Dict:
     cursor = None
     try:
+        where_clause = ""
+        params = ()
+        if paper_id is not None:
+            if not isinstance(paper_id, int) or paper_id <= 0:
+                raise HTTPException(status_code=400, detail="paper_id必须是正整数")
+            where_clause = "p.id = %s"
+            params = (paper_id,)
+        else:
+            student_id_value = str(student_id).strip() if student_id is not None else ""
+            if not student_id_value:
+                raise HTTPException(status_code=400, detail="student_id不能为空")
+
+            if student_id_value.isdigit():
+                student_internal_id = int(student_id_value)
+                where_clause = """
+                (
+                    p.owner_id = %s
+                    OR s.id = %s
+                    OR s.student_id = %s
+                    OR pg.student_id = %s
+                )
+                """
+                params = (
+                    student_internal_id,
+                    student_internal_id,
+                    student_id_value,
+                    student_internal_id,
+                )
+            else:
+                where_clause = "s.student_id = %s"
+                params = (student_id_value,)
+
         cursor = db.cursor(pymysql.cursors.DictCursor)
-        query_sql = """
+        query_sql = f"""
         SELECT
             p.id AS paper_id,
             s.name AS student_name,
@@ -1821,13 +1845,16 @@ def get_paper_student_basic_info(
         LEFT JOIN students s ON s.id = p.owner_id
         LEFT JOIN teachers t ON t.id = p.teacher_id
         LEFT JOIN paper_grades pg ON pg.paper_id = p.id
-        WHERE p.id = %s
+        WHERE {where_clause}
+        ORDER BY p.updated_at DESC, p.id DESC
         LIMIT 1
         """
-        cursor.execute(query_sql, (paper_id,))
+        cursor.execute(query_sql, params)
         row = cursor.fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 不存在")
+            if paper_id is not None:
+                raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"学生ID/学号 {student_id} 未找到对应论文信息")
 
         return {
             "paper_id": row.get("paper_id"),
@@ -1844,6 +1871,220 @@ def get_paper_student_basic_info(
     finally:
         if cursor:
             cursor.close()
+
+
+def _score_to_float(value):
+    return float(value) if value is not None else None
+
+
+@router.post(
+    "/teacher-score",
+    response_model=Dict,
+    summary="教师论文评分",
+    description="输入论文ID或学生ID，保存教师五项评分并自动计算教师评分总分"
+)
+def save_teacher_paper_score(
+    paper_id: Optional[int] = Query(None, description="论文ID，与student_id二选一"),
+    student_id: Optional[str] = Query(None, description="学生ID或学号，与paper_id二选一"),
+    topic_significance_score: Optional[float] = Query(None, ge=0, le=999.99, description="选题意义评分"),
+    logical_ability_score: Optional[float] = Query(None, ge=0, le=999.99, description="逻辑能力评分"),
+    knowledge_application_score: Optional[float] = Query(None, ge=0, le=999.99, description="综合运用知识能力评分"),
+    problem_analysis_solution_score: Optional[float] = Query(None, ge=0, le=999.99, description="分析解决问题能力评分"),
+    academic_norm_score: Optional[float] = Query(None, ge=0, le=999.99, description="学术规范评分"),
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    if paper_id is None and student_id is None:
+        raise HTTPException(status_code=400, detail="paper_id和student_id必须传入一个")
+    if paper_id is not None and student_id is not None:
+        raise HTTPException(status_code=400, detail="paper_id和student_id只能传入一个")
+
+    score_values = {
+        "topic_significance_score": topic_significance_score,
+        "logical_ability_score": logical_ability_score,
+        "knowledge_application_score": knowledge_application_score,
+        "problem_analysis_solution_score": problem_analysis_solution_score,
+        "academic_norm_score": academic_norm_score,
+    }
+    provided_scores = {
+        field: value
+        for field, value in score_values.items()
+        if value is not None
+    }
+    if not provided_scores:
+        raise HTTPException(status_code=400, detail="至少需要输入一项评分")
+
+    cursor = None
+    try:
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        if paper_id is not None:
+            if paper_id <= 0:
+                raise HTTPException(status_code=400, detail="paper_id必须是正整数")
+            cursor.execute(
+                """
+                SELECT
+                    p.id AS paper_id,
+                    p.owner_id AS student_internal_id,
+                    p.teacher_id AS teacher_id
+                FROM papers p
+                WHERE p.id = %s
+                LIMIT 1
+                """,
+                (paper_id,),
+            )
+        else:
+            student_id_value = str(student_id).strip() if student_id is not None else ""
+            if not student_id_value:
+                raise HTTPException(status_code=400, detail="student_id不能为空")
+
+            if student_id_value.isdigit():
+                student_internal_id = int(student_id_value)
+                cursor.execute(
+                    """
+                    SELECT
+                        p.id AS paper_id,
+                        p.owner_id AS student_internal_id,
+                        p.teacher_id AS teacher_id
+                    FROM papers p
+                    LEFT JOIN students s ON s.id = p.owner_id
+                    LEFT JOIN paper_grades pg ON pg.paper_id = p.id
+                    WHERE
+                        p.owner_id = %s
+                        OR s.id = %s
+                        OR s.student_id = %s
+                        OR pg.student_id = %s
+                    ORDER BY p.updated_at DESC, p.id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        student_internal_id,
+                        student_internal_id,
+                        student_id_value,
+                        student_internal_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        p.id AS paper_id,
+                        p.owner_id AS student_internal_id,
+                        p.teacher_id AS teacher_id
+                    FROM papers p
+                    LEFT JOIN students s ON s.id = p.owner_id
+                    WHERE s.student_id = %s
+                    ORDER BY p.updated_at DESC, p.id DESC
+                    LIMIT 1
+                    """,
+                    (student_id_value,),
+                )
+
+        paper_row = cursor.fetchone()
+        if not paper_row:
+            if paper_id is not None:
+                raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"学生ID/学号 {student_id} 未找到对应论文")
+
+        resolved_paper_id = paper_row["paper_id"]
+        resolved_student_id = paper_row["student_internal_id"]
+
+        cursor.execute(
+            """
+            INSERT INTO paper_grades (paper_id, student_id, paper_title, created_at, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE
+                student_id = COALESCE(student_id, VALUES(student_id)),
+                paper_title = paper_title
+            """,
+            (resolved_paper_id, resolved_student_id, ""),
+        )
+
+        set_clause = ", ".join(f"`{field}` = %s" for field in provided_scores)
+        cursor.execute(
+            f"""
+            UPDATE paper_grades
+            SET {set_clause},
+                updated_at = CURRENT_TIMESTAMP
+            WHERE paper_id = %s
+            """,
+            tuple(provided_scores.values()) + (resolved_paper_id,),
+        )
+        cursor.execute(
+            """
+            UPDATE paper_grades
+            SET teacher_total_score =
+                COALESCE(topic_significance_score, 0) +
+                COALESCE(logical_ability_score, 0) +
+                COALESCE(knowledge_application_score, 0) +
+                COALESCE(problem_analysis_solution_score, 0) +
+                COALESCE(academic_norm_score, 0),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE paper_id = %s
+            """,
+            (resolved_paper_id,),
+        )
+        cursor.execute(
+            """
+            SELECT
+                paper_id,
+                student_id,
+                topic_significance_score,
+                logical_ability_score,
+                knowledge_application_score,
+                problem_analysis_solution_score,
+                academic_norm_score,
+                teacher_total_score
+            FROM paper_grades
+            WHERE paper_id = %s
+            LIMIT 1
+            """,
+            (resolved_paper_id,),
+        )
+        grade_row = cursor.fetchone()
+        db.commit()
+
+        return {
+            "message": "教师评分保存成功",
+            "paper_id": grade_row.get("paper_id"),
+            "student_id": grade_row.get("student_id"),
+            "teacher_id": paper_row.get("teacher_id"),
+            "updated_fields": list(provided_scores.keys()),
+            "topic_significance_score": _score_to_float(grade_row.get("topic_significance_score")),
+            "logical_ability_score": _score_to_float(grade_row.get("logical_ability_score")),
+            "knowledge_application_score": _score_to_float(grade_row.get("knowledge_application_score")),
+            "problem_analysis_solution_score": _score_to_float(grade_row.get("problem_analysis_solution_score")),
+            "academic_norm_score": _score_to_float(grade_row.get("academic_norm_score")),
+            "teacher_total_score": _score_to_float(grade_row.get("teacher_total_score")),
+        }
+    except HTTPException:
+        if db:
+            db.rollback()
+        raise
+    except pymysql.MySQLError as e:
+        if db:
+            db.rollback()
+        raise HTTPException(status_code=500, detail=f"数据库操作失败: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
+@router.get(
+    "/student-basic-info",
+    response_model=Dict,
+    summary="获取论文所属学生基本信息",
+    description="输入论文ID或学生ID，查询学生、指导教师及论文题目信息"
+)
+def get_paper_student_basic_info(
+    paper_id: Optional[int] = Query(None, description="论文ID"),
+    student_id: Optional[str] = Query(None, description="学生ID或学号"),
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    if paper_id is None and student_id is None:
+        raise HTTPException(status_code=400, detail="paper_id和student_id必须传入一个")
+    if paper_id is not None and student_id is not None:
+        raise HTTPException(status_code=400, detail="paper_id和student_id只能传入一个")
+
+    return _fetch_paper_student_basic_info(db, paper_id=paper_id, student_id=student_id)
 
 
 @router.get(
