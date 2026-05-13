@@ -268,6 +268,7 @@ PAPER_GRADES_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `paper_grades` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID',
     `paper_id` INT NOT NULL COMMENT '论文ID',
+    `student_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '学生ID',
     `paper_title` VARCHAR(255) NOT NULL COMMENT '论文题目',
     `topic_significance_score` DECIMAL(5,2) DEFAULT NULL COMMENT '选题意义评分',
     `logical_ability_score` DECIMAL(5,2) DEFAULT NULL COMMENT '逻辑能力评分',
@@ -283,6 +284,7 @@ CREATE TABLE IF NOT EXISTS `paper_grades` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uniq_paper_grades_paper_id` (`paper_id`),
+    KEY `idx_paper_grades_student_id` (`student_id`),
     KEY `idx_paper_grades_final_score` (`final_score`),
     CONSTRAINT `fk_paper_grades_paper_id` FOREIGN KEY (`paper_id`) REFERENCES `papers` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='论文评分成绩表';
@@ -673,6 +675,7 @@ TABLE_COLUMN_DEFINITIONS = {
     "paper_grades": {
         "id": "`id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
+        "student_id": "`student_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '学生ID'",
         "paper_title": "`paper_title` VARCHAR(255) NOT NULL COMMENT '论文题目'",
         "topic_significance_score": "`topic_significance_score` DECIMAL(5,2) DEFAULT NULL COMMENT '选题意义评分'",
         "logical_ability_score": "`logical_ability_score` DECIMAL(5,2) DEFAULT NULL COMMENT '逻辑能力评分'",
@@ -861,6 +864,7 @@ TABLE_INDEX_DEFINITIONS = {
     ],
     "paper_grades": [
         "CREATE UNIQUE INDEX uniq_paper_grades_paper_id ON `paper_grades` (paper_id)",
+        "CREATE INDEX idx_paper_grades_student_id ON `paper_grades` (student_id)",
         "CREATE INDEX idx_paper_grades_final_score ON `paper_grades` (final_score)"
     ],
     "papers_history": [
