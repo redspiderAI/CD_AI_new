@@ -290,6 +290,35 @@ CREATE TABLE IF NOT EXISTS `paper_grades` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='论文评分成绩表';
 """
 
+
+PAPER_BASIC_INFO_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `paper_basic_info` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '序号（自增主键）',
+    `college` VARCHAR(128) NOT NULL COMMENT '学院',
+    `student_id` VARCHAR(20) NOT NULL COMMENT '学生学号',
+    `student_name` VARCHAR(100) NOT NULL COMMENT '学生姓名',
+    `student_major` VARCHAR(128) NOT NULL COMMENT '学生专业',
+    `teacher_id` VARCHAR(64) NOT NULL COMMENT '导师工号',
+    `teacher_name` VARCHAR(100) NOT NULL COMMENT '导师姓名',
+    `teacher_title` VARCHAR(64) DEFAULT NULL COMMENT '导师职称',
+    `paper_title` VARCHAR(500) NOT NULL COMMENT '学生论文（设计）题目',
+    `paper_keywords` VARCHAR(500) DEFAULT NULL COMMENT '论文关键词',
+    `paper_source` VARCHAR(255) DEFAULT NULL COMMENT '论文来源',
+    `paper_type` VARCHAR(64) DEFAULT NULL COMMENT '论文类型',
+    `research_direction` VARCHAR(255) DEFAULT NULL COMMENT '论文研究方向',
+    `paper_language` VARCHAR(32) DEFAULT '中文' COMMENT '论文撰写语种',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uniq_student_paper` (`student_id`, `paper_title`),
+    KEY `idx_college` (`college`),
+    KEY `idx_student_id` (`student_id`),
+    KEY `idx_teacher_id` (`teacher_id`),
+    KEY `idx_paper_type` (`paper_type`),
+    KEY `idx_research_direction` (`research_direction`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='论文基础信息汇总表';
+"""
+
 TASKS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `tasks` (
     `id` INT NOT NULL AUTO_INCREMENT COMMENT '自增ID',
@@ -490,6 +519,7 @@ def init_db(database_url: str | None = None) -> None:
                 TASKS_TABLE_SQL,
                 PAPERS_TABLE_SQL,
                 PAPER_GRADES_TABLE_SQL,
+                PAPER_BASIC_INFO_TABLE_SQL,
                 PAPERS_HISTORY_TABLE_SQL,
                 PAPER_REVIEWS_TABLE_SQL,
                 ANNOTATIONS_TABLE_SQL,
@@ -503,7 +533,7 @@ def init_db(database_url: str | None = None) -> None:
         print(
             "Tables ensured: account_mapping, schools, departments, students, teachers, admins, "
             "user_agent_permissions, file_records, groups, group_members, tasks, "
-            "papers, paper_grades, papers_history, paper_reviews, annotations, ddl_management, templates, "
+            "papers, paper_grades, paper_basic_info, papers_history, paper_reviews, annotations, ddl_management, templates, "
             "user_messages, user_sessions, operation_logs"
         )
     finally:
@@ -690,6 +720,24 @@ TABLE_COLUMN_DEFINITIONS = {
         "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间'",
         "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间'",
     },
+    "paper_basic_info": {
+        "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '序号（自增主键）'",
+        "college": "`college` VARCHAR(128) NOT NULL COMMENT '学院'",
+        "student_id": "`student_id` VARCHAR(20) NOT NULL COMMENT '学生学号'",
+        "student_name": "`student_name` VARCHAR(100) NOT NULL COMMENT '学生姓名'",
+        "student_major": "`student_major` VARCHAR(128) NOT NULL COMMENT '学生专业'",
+        "teacher_id": "`teacher_id` VARCHAR(64) NOT NULL COMMENT '导师工号'",
+        "teacher_name": "`teacher_name` VARCHAR(100) NOT NULL COMMENT '导师姓名'",
+        "teacher_title": "`teacher_title` VARCHAR(64) DEFAULT NULL COMMENT '导师职称'",
+        "paper_title": "`paper_title` VARCHAR(500) NOT NULL COMMENT '学生论文（设计）题目'",
+        "paper_keywords": "`paper_keywords` VARCHAR(500) DEFAULT NULL COMMENT '论文关键词'",
+        "paper_source": "`paper_source` VARCHAR(255) DEFAULT NULL COMMENT '论文来源'",
+        "paper_type": "`paper_type` VARCHAR(64) DEFAULT NULL COMMENT '论文类型'",
+        "research_direction": "`research_direction` VARCHAR(255) DEFAULT NULL COMMENT '论文研究方向'",
+        "paper_language": "`paper_language` VARCHAR(32) DEFAULT '中文' COMMENT '论文撰写语种'",
+        "created_at": "`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'",
+        "updated_at": "`updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'",
+    },
     "papers_history": {
         "id": "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '历史版本ID'",
         "paper_id": "`paper_id` INT NOT NULL COMMENT '论文ID'",
@@ -867,6 +915,14 @@ TABLE_INDEX_DEFINITIONS = {
         "CREATE INDEX idx_paper_grades_student_id ON `paper_grades` (student_id)",
         "CREATE INDEX idx_paper_grades_final_score ON `paper_grades` (final_score)"
     ],
+    "paper_basic_info": [
+        "CREATE UNIQUE INDEX uniq_student_paper ON `paper_basic_info` (student_id, paper_title)",
+        "CREATE INDEX idx_college ON `paper_basic_info` (college)",
+        "CREATE INDEX idx_student_id ON `paper_basic_info` (student_id)",
+        "CREATE INDEX idx_teacher_id ON `paper_basic_info` (teacher_id)",
+        "CREATE INDEX idx_paper_type ON `paper_basic_info` (paper_type)",
+        "CREATE INDEX idx_research_direction ON `paper_basic_info` (research_direction)"
+    ],
     "papers_history": [
         "CREATE INDEX idx_papers_history_paper_id ON `papers_history` (paper_id)",
         "CREATE INDEX idx_papers_history_version ON `papers_history` (version)",
@@ -939,6 +995,7 @@ def sync_schema(database_url: str | None = None) -> None:
                 GROUP_MEMBERS_TABLE_SQL,
                 PAPERS_TABLE_SQL,
                 PAPER_GRADES_TABLE_SQL,
+                PAPER_BASIC_INFO_TABLE_SQL,
                 PAPERS_HISTORY_TABLE_SQL,
                 PAPER_REVIEWS_TABLE_SQL,
                 ANNOTATIONS_TABLE_SQL,

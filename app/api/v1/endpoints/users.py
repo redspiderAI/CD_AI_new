@@ -1755,6 +1755,194 @@ async def import_users(file: UploadFile = File(...), db: pymysql.connections.Con
         if cursor:
             cursor.close()
 
+
+@router.post(
+    "/import/cjlu-info",
+    summary="中国计量大学信息工程学院专用一键导入",
+    description="""上传 CSV/TSV/XLSX 文件批量导入学生和教师（针对中国计量大学信息工程学院专用）
+    支持的表头列：学号,姓名,学年,学期,年级,课题主管学院,学生学院,专业名称,班级,课题名称,课题类型,课题性质,课题来源,指导教师工号,指导教师姓名,指导教师职称,答辩记录上传状态,合成状态,录入状态,五级制总成绩,百分制总成绩,是否重修成绩,论文指导教师成绩,论文指导教师成绩比例,评阅老师成绩,评阅老师成绩比例,论文二次答辩成绩,论文二次答辩成绩比例,开题报告二次答辩成绩,开题报告二次答辩成绩比例,论文答辩成绩,论文答辩成绩比例,中期报告成绩,中期报告成绩比例,论文初稿成绩,论文初稿成绩比例,外文翻译成绩,外文翻译成绩比例,文献综述成绩,文献综述成绩比例,开题报告答辩成绩,开题报告答辩成绩比例
+    
+    导入规则：
+    - 学生：学号作为用户名，角色类型默认student，姓名作为全名，密码默认123456
+    - 教师：指导教师工号前加"t"作为用户名，角色类型默认teacher，指导教师姓名作为全名，密码默认123456
+    """
+)
+async def import_cjlu_info_users(file: UploadFile = File(...), db: pymysql.connections.Connection = Depends(get_db)):
+    filename = file.filename or ""
+    lower_name = filename.lower()
+    if not lower_name.endswith(SUPPORTED_IMPORT_EXTS):
+        raise HTTPException(status_code=400, detail=f"仅支持 {', '.join(SUPPORTED_IMPORT_EXTS)} 文件")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传文件为空")
+
+    rows = []
+    
+    # 处理不同文件类型
+    if lower_name.endswith(('.xlsx', '.xls')):
+        # 读取时指定 dtype=str，强制所有单元格为字符串，避免科学计数法问题
+        df = pd.read_excel(io.BytesIO(content), dtype=str)
+        
+        # 处理列名，避免int类型strip报错
+        df.columns = [
+            str(col).strip() if pd.notna(col) else "" 
+            for col in df.columns
+        ]
+        
+        # 检查必填列
+        required_cols = ["学号", "姓名", "指导教师工号", "指导教师姓名"]
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"文件表头缺少必填列：{', '.join(missing)}。必填列：学号,姓名,指导教师工号,指导教师姓名")
+        
+        # 清理所有单元格的空值和空格，确保所有数据为字符串
+        df = df.fillna("").astype(str)
+        for col in df.columns:
+            df[col] = df[col].str.strip()
+        
+        # 转换为字典列表
+        rows = df.to_dict(orient="records")
+    else:
+        # 处理CSV/TSV文件
+        delimiter = "\t" if lower_name.endswith(".tsv") else ","
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                text = content.decode("gbk")
+            except UnicodeDecodeError:
+                raise HTTPException(status_code=400, detail="文件编码仅支持 UTF-8 或 GBK")
+
+        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+        if reader.fieldnames is None:
+            raise HTTPException(status_code=400, detail="CSV 文件缺少标题行或文件为空")
+        required_cols = ["学号", "姓名", "指导教师工号", "指导教师姓名"]
+        missing = [col for col in required_cols if col not in reader.fieldnames]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"文件表头缺少必填列：{', '.join(missing)}。必填列：学号,姓名,指导教师工号,指导教师姓名")
+        rows = list(reader)
+
+    default_password = "123456"
+    cursor = None
+    created_students = 0
+    updated_students = 0
+    created_teachers = 0
+    updated_teachers = 0
+    created_student_items = []
+    updated_student_items = []
+    created_teacher_items = []
+    updated_teacher_items = []
+    
+    # 用于去重的集合
+    processed_students = set()
+    processed_teachers = set()
+    
+    try:
+        cursor = db.cursor()
+        
+        for row in rows:
+            # 安全获取字符串值
+            def safe_get_str(key):
+                val = row.get(key)
+                if val is None or pd.isna(val):
+                    return ""
+                s = str(val)
+                return s.strip()
+            
+            # 处理学生数据
+            student_id = safe_get_str("学号")
+            student_name = safe_get_str("姓名")
+            
+            if student_id and student_id not in processed_students:
+                processed_students.add(student_id)
+                email = "string"
+                password_hash = get_password_hash(default_password)
+                full_name = student_name if student_name else student_id
+                
+                cursor.execute(
+                    """
+                    INSERT INTO students (student_id, name, email, password)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        name = VALUES(name),
+                        email = VALUES(email),
+                        password = VALUES(password),
+                        updated_at = NOW()
+                    """,
+                    (student_id, full_name, email, password_hash),
+                )
+                
+                # 获取记录ID
+                cursor.execute("SELECT id FROM students WHERE student_id = %s", (student_id,))
+                rid = cursor.fetchone()
+                rec_id = rid[0] if rid else None
+                
+                if cursor.rowcount == 1:
+                    created_students += 1
+                    created_student_items.append({"user_type": "student", "username": student_id, "name": full_name, "id": rec_id})
+                else:
+                    updated_students += 1
+                    updated_student_items.append({"user_type": "student", "username": student_id, "name": full_name, "id": rec_id})
+            
+            # 处理教师数据
+            teacher_gh = safe_get_str("指导教师工号")
+            teacher_name = safe_get_str("指导教师姓名")
+            
+            if teacher_gh and teacher_gh not in processed_teachers:
+                processed_teachers.add(teacher_gh)
+                # 教师用户名：在工号前加"t"
+                teacher_username = "t" + teacher_gh
+                email = "string"
+                password_hash = get_password_hash(default_password)
+                full_name = teacher_name if teacher_name else teacher_username
+                
+                cursor.execute(
+                    """
+                    INSERT INTO teachers (teacher_id, name, email, password)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        name = VALUES(name),
+                        email = VALUES(email),
+                        password = VALUES(password),
+                        updated_at = NOW()
+                    """,
+                    (teacher_username, full_name, email, password_hash),
+                )
+                
+                # 获取记录ID
+                cursor.execute("SELECT id FROM teachers WHERE teacher_id = %s", (teacher_username,))
+                rid = cursor.fetchone()
+                rec_id = rid[0] if rid else None
+                
+                if cursor.rowcount == 1:
+                    created_teachers += 1
+                    created_teacher_items.append({"user_type": "teacher", "username": teacher_username, "name": full_name, "id": rec_id})
+                else:
+                    updated_teachers += 1
+                    updated_teacher_items.append({"user_type": "teacher", "username": teacher_username, "name": full_name, "id": rec_id})
+        
+        db.commit()
+        return {
+            "message": "导入完成",
+            "students_created": created_students,
+            "students_updated": updated_students,
+            "teachers_created": created_teachers,
+            "teachers_updated": updated_teachers,
+            "created_students": created_student_items,
+            "updated_students": updated_student_items,
+            "created_teachers": created_teacher_items,
+            "updated_teachers": updated_teacher_items,
+        }
+    except pymysql.MySQLError as e:
+        db.rollback()
+        logger.error(f"中国计量大学信息工程学院用户导入数据库错误: {str(e)}")
+        raise HTTPException(status_code=500, detail="用户导入失败")
+    finally:
+        if cursor:
+            cursor.close()
+
+
 @router.get(
     "/all",
     summary="查询所有用户",
