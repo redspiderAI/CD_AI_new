@@ -1792,6 +1792,61 @@ def update_ddl(
 
 
 @router.get(
+    "/{paper_id}/student-basic-info",
+    response_model=Dict,
+    summary="获取论文所属学生基本信息",
+    description="输入论文ID，查询论文所属学生、指导教师及论文题目信息"
+)
+def get_paper_student_basic_info(
+    paper_id: int,
+    db: pymysql.connections.Connection = Depends(get_db),
+):
+    if not isinstance(paper_id, int) or paper_id <= 0:
+        raise HTTPException(status_code=400, detail="paper_id必须是正整数")
+
+    cursor = None
+    try:
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+        query_sql = """
+        SELECT
+            p.id AS paper_id,
+            s.name AS student_name,
+            t.name AS teacher_name,
+            s.class_name AS class_name,
+            s.major AS major,
+            s.department_name AS department_name,
+            s.student_id AS student_id,
+            pg.paper_title AS paper_title
+        FROM papers p
+        LEFT JOIN students s ON s.id = p.owner_id
+        LEFT JOIN teachers t ON t.id = p.teacher_id
+        LEFT JOIN paper_grades pg ON pg.paper_id = p.id
+        WHERE p.id = %s
+        LIMIT 1
+        """
+        cursor.execute(query_sql, (paper_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"论文ID {paper_id} 不存在")
+
+        return {
+            "paper_id": row.get("paper_id"),
+            "student_name": row.get("student_name"),
+            "teacher_name": row.get("teacher_name"),
+            "class_name": row.get("class_name"),
+            "major": row.get("major"),
+            "department_name": row.get("department_name"),
+            "student_id": row.get("student_id"),
+            "paper_title": row.get("paper_title"),
+        }
+    except pymysql.MySQLError as e:
+        raise HTTPException(status_code=500, detail=f"数据库操作失败: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+
+
+@router.get(
     "/{paper_id}",
     response_model=Dict,
     summary="查看论文所有信息",
